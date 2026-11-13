@@ -898,6 +898,34 @@ function Battery({ charge }: { charge: number }) {
   )
 }
 
+/** The rover's pad: a marked bay, a charging post and a cable to the bank. */
+function RoverPad() {
+  return (
+    <group>
+      <mesh receiveShadow position={[0, 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[6.2, 3.6]} />
+        <meshStandardMaterial color="#5c5248" roughness={0.95} />
+      </mesh>
+      {[-1.7, 1.7].map((z) => (
+        <mesh key={z} position={[0, 0.02, z]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[6.2, 0.16]} />
+          <meshStandardMaterial color="#e2b457" emissive="#e2b457" emissiveIntensity={0.25} roughness={0.8} />
+        </mesh>
+      ))}
+      {/* charging post */}
+      <mesh castShadow position={[-2.6, 0.75, 1.5]}>
+        <boxGeometry args={[0.35, 1.5, 0.35]} />
+        <meshStandardMaterial color="#6b7684" roughness={0.5} metalness={0.5} />
+      </mesh>
+      <mesh position={[-2.6, 1.35, 1.69]}>
+        <planeGeometry args={[0.22, 0.14]} />
+        <meshStandardMaterial color="#fbbf24" emissive="#fbbf24" emissiveIntensity={1.6} toneMapped={false} />
+      </mesh>
+      <DustSkirt inner={2.4} outer={4.0} />
+    </group>
+  )
+}
+
 // ===========================================================================
 //  FISSION SURFACE POWER
 // ===========================================================================
@@ -1025,7 +1053,14 @@ function Reactor({ state: mode }: { state: ReactorState }) {
 //  ROVER
 // ===========================================================================
 
-function Rover({ charged }: { charged: boolean }) {
+/**
+ * The pressurised rover.
+ *
+ * Exported because it is no longer part of the outpost: the vehicle is driven
+ * and parked wherever the crew leaves it, so `world/Expedition.tsx` owns its
+ * position and this file only owns what it looks like.
+ */
+export function Rover({ charged }: { charged: boolean }) {
   const hull = useMemo(() => hullPanels(), [])
 
   return (
@@ -1269,7 +1304,9 @@ export function Structures() {
             <Processor tint="#7dd3fc" kind="oxygen" running={plan.modes.oxygenGenerator > 0} />
           )}
           {d.id === 'battery' && <Battery charge={Math.min(state.stocks.battery / 40, 1)} />}
-          {d.id === 'rover' && <Rover charged={plan.modes.roverCharge > 0} />}
+          {/* The dock pad stays put; the vehicle itself is wherever it was
+              last parked, and is drawn by the expedition controller. */}
+          {d.id === 'rover' && <RoverPad />}
           {d.id === 'reactor' && <Reactor state={state.reactor} />}
           {d.id === 'breach' && <Breach active={state.o2Leak > 0} />}
           {d.id !== 'breach' && d.id !== 'habitat' && <Beacon color={d.tint} />}

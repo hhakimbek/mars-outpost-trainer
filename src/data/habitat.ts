@@ -401,6 +401,16 @@ export const STATIONS: Station[] = [
       'grow anything, which is why the greenhouse here is hydroponic.',
   },
   {
+    id: 'sampleRack', room: 'lab', name: 'Sample Rack',
+    kind: 'readout', pos: [-1.5, 2.3], facing: Math.PI / 2, range: 1.5,
+    fn: 'Work the rocks the rover brought home. This is where they become science.',
+    learn:
+      'A rock in a bag is worth nothing. Perseverance is caching samples on the surface of Mars ' +
+      'precisely because the analysis that makes them valuable cannot be done there — it needs ' +
+      'a laboratory. Here the laboratory is forty metres away, which is the one advantage a ' +
+      'crewed mission has over a rover.',
+  },
+  {
     id: 'galleyStation', room: 'galley', name: 'Galley',
     kind: 'action', op: 'sharedMeal', pos: [1.0, 4.3], facing: Math.PI, range: 1.7,
     fn: 'Cook and serve a shared hot meal for the whole crew.',

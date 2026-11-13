@@ -5,6 +5,7 @@ import {
   advanceRack, bedStage, createGreenhouse, greenhouseSummary, plantBed,
   rackForecast, type RackInputs,
 } from './greenhouse'
+import { chargeRover } from './expedition'
 import { mulberry32 } from './rng'
 import { cloneState } from './clone'
 import { MODE_NAMES } from './types'
@@ -113,6 +114,12 @@ export function createInitialState(
     lastInspection: 0,
     habitatOpsUsed: [],
     reactor: 'stowed',
+    roverKwh: 0,
+    drilled: {},
+    waterDrilled: 0,
+    samplesTaken: [],
+    samplesHeld: [],
+    samplesAnalysed: 0,
     telemetry: true,
     faultsFixed: 0,
     brownoutSols: 0,
@@ -973,6 +980,17 @@ export function resolveSol(
   const stored = Math.min(power.surplus, Math.max(C.CAP_BATTERY - s.stocks.battery, 0))
   s.stocks.battery = clamp(s.stocks.battery - power.batteryDraw + stored, 0, C.CAP_BATTERY)
   s.roverCharged = mode('roverCharge') !== 0
+  // The rover carries exactly the energy the plan actually delivered to it —
+  // not what the plan asked for. A browned-out charge is a short expedition,
+  // and the player finds that out at the rover rather than in a footnote.
+  chargeRover(s, effectiveCost('roverCharge', mode('roverCharge'), mods))
+  if (s.roverKwh > 0) {
+    log(solLog, s.sol, 'Rover',
+      `The rover is holding ${s.roverKwh.toFixed(1)} kWh — about ` +
+      `${Math.round((s.roverKwh / C.ROVER_KWH_PER_100M) * 100)} m of driving, or ` +
+      `${Math.floor(s.roverKwh / C.DRILL_KWH)} drill hole(s) and the distance left over.`,
+      s.roverKwh)
+  }
 
   // 12. dust and wear
   const dustLoss = C.DUST_PER_SOL + (s.env.dustStorm ? 0.22 : 0)

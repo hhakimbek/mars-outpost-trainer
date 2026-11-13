@@ -6,6 +6,7 @@ import * as THREE from 'three'
 import { Terrain, Rocks, DistantRidges } from './Terrain'
 import { Structures } from './Structures'
 import { Astronaut } from './Astronaut'
+import { Expedition } from './Expedition'
 import { useGame } from '../store/useGame'
 import { terrainHeight } from './noise'
 import { softGlow } from './textures'
@@ -561,6 +562,7 @@ export function Scene() {
       <Paths />
       <SiteProps />
       <Structures />
+      <Expedition />
       <Astronaut />
       <Dust storm={storm} />
       <Post />

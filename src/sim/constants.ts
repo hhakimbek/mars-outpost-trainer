@@ -239,6 +239,74 @@ export const C = {
   // whole design. Every figure here is GAME: the trades are real, the numbers
   // are tuned so that none of them is free and none is a dominant move.
 
+  // --------------------------------------------------------- the expedition
+  //
+  // Driving, drilling and sample collection. The rover carries only the energy
+  // the sol's plan charged into it, so every one of these numbers is competing
+  // with the others for the same kWh — which is the entire design.
+
+  /**
+   * How sharply the ice field separates into lenses. GAME
+   *
+   * Mixed noise is centred on a half; raising it to this power pushes the
+   * field apart so that most of the bowl is dry and the deposits are worth
+   * finding. Measured in test/field.test.ts rather than eyeballed: the
+   * baseline site ends up with roughly a tenth of its ground drillable.
+   */
+  ICE_CONTRAST: 1.85,
+  /**
+   * How much a landing site's ice rating moves the field. GAME
+   *
+   * Applied as an exponent, not a multiplier. A straight multiply after the
+   * contrast curve made the rich sites a carpet of ice and the poor ones
+   * barren — Gale had literally no drillable ground, which is not a choice,
+   * it is a dead end. At 0.35 the six sites come out in the right order and
+   * every one of them has something: Arcadia 44% of its bowl drillable,
+   * Jezero 21%, Gale 5%. Measured in test/field.test.ts.
+   */
+  ICE_ABUNDANCE_EXP: 0.35,
+
+  /** Energy the rover can hold, kWh. GAME — it is the sol's charge, capped. */
+  ROVER_KWH_CAP: 14,
+  /**
+   * Energy to drive 100 m, kWh. REAL~
+   *
+   * Pressurised rover concepts come out around 1 kWh per kilometre at survey
+   * speed. At that rate the whole 150 m bowl costs 0.15 kWh and driving is
+   * free, so the figure is scaled against this outpost's budget the same way
+   * the reactor is. What has to be true is the thing the test asserts: a run
+   * to the far edge and back is affordable, and it leaves only a couple of
+   * holes' worth of energy behind it. At 0.55 it left twelve of fourteen kWh
+   * and distance meant nothing.
+   */
+  ROVER_KWH_PER_100M: 2.2,
+  /** Energy per drill attempt, kWh, dry hole or not. GAME */
+  DRILL_KWH: 3.6,
+  /**
+   * Litres recovered at 100% radar return, scaled by the real return. GAME
+   *
+   * Sized against the whole sol rather than against the hole. A full charge
+   * is three holes if you never drive, and three good holes is a bit more
+   * than the crew drinks in a sol — a real supplement, and nowhere near a
+   * replacement for the recycler. At 26 L it was five times the daily draw,
+   * which made the water economy irrelevant the moment the rover rolled.
+   */
+  DRILL_LITRES: 14,
+  /** Metres of ground one lens covers, for bookkeeping. GAME */
+  DRILL_PATCH: 12,
+  /** Litres in a lens at the drilling threshold. GAME */
+  PATCH_LITRES_BASE: 60,
+  /** Extra litres per point of concentration above the threshold. GAME */
+  PATCH_LITRES_SPAN: 260,
+  /**
+   * Sample slots on the rover. GAME
+   *
+   * Small on purpose. Perseverance carries 43 sample tubes for a mission of
+   * years; a day trip with a rack this size forces the player to choose which
+   * rocks are worth the drive home.
+   */
+  ROVER_CARGO: 6,
+
   // ------------------------------------------------- fission surface power
   //
   // The backup reactor is modelled on NASA's Kilopower project and its KRUSTY

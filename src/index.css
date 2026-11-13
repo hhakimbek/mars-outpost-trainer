@@ -716,3 +716,43 @@ button:disabled { cursor: not-allowed; }
 }
 
 @keyframes airlock-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ------------------------------------------------------------- expedition */
+
+/*
+ * The rover's instrument panel. It sits on the right so it never covers the
+ * radar's own subject — the ground directly ahead of the vehicle — and it is
+ * laid out as instruments rather than as prose, because the player is reading
+ * it while steering.
+ */
+.rover-hud {
+  position: absolute; right: 18px; top: 50%; transform: translateY(-50%);
+  width: 268px; display: flex; flex-direction: column; gap: 9px;
+}
+.rover-panel {
+  background: var(--surface); border: 1px solid var(--border-hi);
+  border-radius: 8px; padding: 10px 13px; backdrop-filter: blur(12px);
+}
+.radar-read { display: flex; align-items: center; gap: 11px; margin: 6px 0 8px; }
+.radar-num { font-size: 27px; font-weight: 700; color: var(--text-faint); line-height: 1; }
+.radar-num.good { color: var(--o2); }
+.radar-track {
+  position: relative; height: 6px; background: #16202c;
+  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+}
+.radar-fill { height: 100%; background: #4a5a6b; transition: width 0.14s linear; }
+.radar-fill.good { background: linear-gradient(90deg, var(--o2), var(--water)); }
+/* the line the drill needs to clear — the single most useful mark on the bar */
+.radar-threshold {
+  position: absolute; top: -1px; bottom: -1px; width: 2px;
+  background: var(--caution); opacity: 0.85; z-index: 2;
+}
+.rover-keys {
+  background: var(--surface); border: 1px solid var(--border-hi);
+  border-radius: 8px; padding: 10px 13px; backdrop-filter: blur(12px);
+  display: flex; flex-direction: column; gap: 7px; font-size: 12.5px;
+}
+.rover-sample {
+  border-top: 1px solid var(--border); padding-top: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+}

@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { C } from '../sim/constants'
 import { FLOOR_AREA_M2, roomById, stationById, type Station } from '../data/habitat'
 import { HABITAT_OPS, opBlockedReason, type HabitatOpId } from '../sim/habitatOps'
+import { SAMPLE_INFO, type SampleKind } from '../world/iceField'
 import { useGame } from '../store/useGame'
 import { useField } from '../world/fieldState'
 
@@ -23,6 +24,7 @@ function Readout({ id }: { id: string }) {
   const projection = useGame((s) => s.projection())
   const setPhase = useGame((s) => s.setPhase)
   const plan = useGame((s) => s.plan)
+  const analyse = useGame((s) => s.analyseRack)
 
   if (id === 'planningConsole') {
     return (
@@ -55,6 +57,45 @@ function Readout({ id }: { id: string }) {
           {projection.telemetry
             ? 'The forecast on the planning screen is arriving. One-way light time to Earth right now is between 4 and 24 minutes.'
             : 'Comms is unfunded, so the forecast is unavailable. The outpost keeps running — you just cannot see ahead.'}
+        </div>
+      </div>
+    )
+  }
+
+  if (id === 'sampleRack') {
+    const held = state.samplesHeld
+    const worth = held.reduce((t, k) => t + SAMPLE_INFO[k].value, 0)
+    const counts = held.reduce<Partial<Record<SampleKind, number>>>((m, k) => {
+      m[k] = (m[k] ?? 0) + 1
+      return m
+    }, {})
+    return (
+      <div className="stack gap-s mt-s small">
+        <div className="row spread">
+          <span className="body-dim">In the rack</span>
+          <span className="num">{held.length} / {C.ROVER_CARGO}</span>
+        </div>
+        {held.length === 0 ? (
+          <div className="tiny body-dim">
+            Empty. Rocks are collected out in the field — drive the rover to a flagged site and
+            press F.
+          </div>
+        ) : (
+          <>
+            {(Object.keys(counts) as SampleKind[]).map((k) => (
+              <div key={k} className="row spread tiny">
+                <span>{SAMPLE_INFO[k].name}{counts[k]! > 1 ? ` ×${counts[k]}` : ''}</span>
+                <span className="num">+{SAMPLE_INFO[k].value * counts[k]!}</span>
+              </div>
+            ))}
+            <button className="btn primary" onClick={() => analyse()}>
+              <span className="prompt-key">E</span> Analyse all — +{Math.round(worth)} science
+            </button>
+          </>
+        )}
+        <div className="row spread tiny body-dim">
+          <span>Analysed so far</span>
+          <span className="num">{state.samplesAnalysed}</span>
         </div>
       </div>
     )
@@ -240,6 +281,7 @@ export function InteriorPrompt() {
   const runOp = useGame((s) => s.runHabitatOp)
   const beginAirlock = useGame((s) => s.beginAirlock)
   const setPhase = useGame((s) => s.setPhase)
+  const analyseRack = useGame((s) => s.analyseRack)
   const airlockDir = useGame((s) => s.airlockDir)
 
   // Single-press stations are handled here rather than in the 3D controller,
@@ -256,11 +298,13 @@ export function InteriorPrompt() {
         beginAirlock('out')
       } else if (station.id === 'planningConsole') {
         setPhase('planning')
+      } else if (station.id === 'sampleRack') {
+        analyseRack()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [station, state, runOp, beginAirlock, setPhase, airlockDir])
+  }, [station, state, runOp, beginAirlock, setPhase, analyseRack, airlockDir])
 
   if (!station) return null
   const room = roomById(station.room)!

@@ -9,6 +9,7 @@ import { cropById } from '../data/crops'
 import { GaugeRow, HabitatStrip } from './Gauges'
 import { AirlockOverlay } from './Airlock'
 
+
 /**
  * The indoor HUD travels with the deck plan, so it loads with the interior
  * rather than with the menu. The airlock cycle covers the download: by the
@@ -16,6 +17,13 @@ import { AirlockOverlay } from './Airlock'
  */
 const InteriorHud = lazy(() =>
   import('./InteriorPanel').then((m) => ({ default: m.InteriorHud })))
+
+/**
+ * The rover's instrument panel reads the ice field, which carries the whole
+ * noise model with it. Loaded with the expedition rather than with the menu.
+ */
+const ExpeditionHud = lazy(() =>
+  import('./ExpeditionHud').then((m) => ({ default: m.ExpeditionHud })))
 
 const ZONE_LABEL: Record<string, string> = {
   shelter: 'SHIELDED CORE', habitat: 'HABITAT', rover: 'ROVER', eva: 'EVA — SURFACE',
@@ -40,10 +48,13 @@ export function Hud() {
   const inside = useGame((s) => s.inside)
   const airlockDir = useGame((s) => s.airlockDir)
   const beginAirlock = useGame((s) => s.beginAirlock)
+  const driving = useGame((s) => s.driving)
+  const boardRover = useGame((s) => s.boardRover)
 
   const focusedId = useField((s) => s.focusedId)
   const holdProgress = useField((s) => s.holdProgress)
   const locked = useField((s) => s.pointerLocked)
+  const nearRover = useField((s) => s.nearRover)
 
   const focused = focusedId ? structureById(focusedId) : undefined
   const openTask = focused?.task && assignments.some((a) => a.task === focused.task && !a.fieldConfirmed)
@@ -72,6 +83,9 @@ export function Hud() {
       if (e.code === 'KeyE' && !inside && !airlockDir && focused?.id === 'habitat') {
         beginAirlock('in')
       }
+      // Climbing aboard takes priority over any structure prompt: if you are
+      // standing at the rover, E means the rover.
+      if (e.code === 'KeyE' && !inside && !driving && nearRover) boardRover()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -142,8 +156,13 @@ export function Hud() {
         </Suspense>
       )}
       <AirlockOverlay />
+      {driving && (
+        <Suspense fallback={null}>
+          <ExpeditionHud />
+        </Suspense>
+      )}
 
-      {!locked && (
+      {!locked && !driving && (
         <div className="lock-hint">
           <div className="h3">Click to look around</div>
           <div className="small body-dim mt-s">
@@ -152,7 +171,23 @@ export function Hud() {
         </div>
       )}
 
-      {!inside && focused && (
+      {!inside && !driving && nearRover && (
+        <div className="prompt">
+          <div className="h3">Pressurised Rover</div>
+          <div className="tiny body-dim mt-s">
+            {state.roverKwh > 0
+              ? `${state.roverKwh.toFixed(1)} kWh aboard — about ` +
+                `${Math.round((state.roverKwh / C.ROVER_KWH_PER_100M) * 100)} m of driving`
+              : 'Flat. Give roverCharge power in the plan and it will be charged overnight.'}
+          </div>
+          <div className="mt-s small">
+            <span className="prompt-key">E</span>
+            Climb aboard and drive out to prospect
+          </div>
+        </div>
+      )}
+
+      {!inside && !driving && !nearRover && focused && (
         <div className="prompt">
           <div className="h3">{focused.name}</div>
           <div className="tiny body-dim mt-s">{focused.fn}</div>

@@ -693,6 +693,9 @@ export function HowTo() {
             <span className="k">E</span><span>Hold to carry out scheduled work at a structure or an indoor station</span>
             <span className="k">E</span><span>At the habitat, cycle the airlock and go inside — and at the suit rack, come back out</span>
             <span className="k">H</span><span>Plant a crop, at the greenhouse (a ripe crop is harvested for you)</span>
+            <span className="k">W S / A D</span><span>In the rover: throttle and steer</span>
+            <span className="k">F</span><span>Collect the flagged sample you are parked beside</span>
+            <span className="k">Q</span><span>Climb out of the rover, wherever it is</span>
             <span className="k">V</span><span>Switch between first-person and over-the-shoulder view</span>
             <span className="k">Tab</span><span>Switch which astronaut you control</span>
             <span className="k">P</span><span>Open the planning screen</span>
@@ -701,7 +704,7 @@ export function HowTo() {
         </div>
 
         <div className="card mt-m" style={{ borderColor: 'var(--caution)' }}>
-          <div className="h3" style={{ color: 'var(--caution)' }}>Four things players get wrong</div>
+          <div className="h3" style={{ color: 'var(--caution)' }}>Five things players get wrong</div>
           <p className="small body-dim mt-s">
             <strong>Planning is not doing.</strong> A task you assign shows ○ until you walk to the
             structure and hold E. An unperformed repair does nothing.
@@ -715,6 +718,11 @@ export function HowTo() {
             science, inspection and rest — happen at a station <em>inside</em>. Walk to the habitat
             and press E. Indoors the EVA window stops running and the radiation dose slows right
             down, which is the whole point of having walls.
+          </p>
+          <p className="small body-dim mt-s">
+            <strong>Read the radar before you drill.</strong> A hole costs the same energy whether
+            it finds ice or not, and most of the ground around the outpost has nothing under it.
+            Drive, watch the return climb, stop when it clears the marked line — then drill.
           </p>
           <p className="small body-dim mt-s">
             <strong>Dose never goes down.</strong> Rotate who does the EVA work, and install regolith

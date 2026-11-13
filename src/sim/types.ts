@@ -1,4 +1,5 @@
 import type { CropId } from '../data/crops'
+import type { SampleKind } from '../world/iceField'
 
 export type SolPhase =
   | 'menu' | 'orbit' | 'descent' | 'briefing' | 'planning' | 'fieldOps'
@@ -266,6 +267,24 @@ export interface MissionState {
   arrayFault: boolean
   thermalFault: boolean
   roverCharged: boolean
+  /**
+   * Energy aboard the rover right now, kWh.
+   *
+   * Set from the power the sol's plan actually delivered to roverCharge, then
+   * spent in real time by driving and drilling. When it reaches zero the
+   * rover stops where it is and the crew member walks home.
+   */
+  roverKwh: number
+  /** Litres already taken out of each ice lens, keyed by patch. */
+  drilled: Record<string, number>
+  /** Total litres drilled this mission, for the debrief. */
+  waterDrilled: number
+  /** Sample site ids already picked up, so a rock cannot be collected twice. */
+  samplesTaken: string[]
+  /** Samples in the rack, not yet analysed. Worth nothing until they are. */
+  samplesHeld: SampleKind[]
+  /** How many have been worked at the laboratory bench. */
+  samplesAnalysed: number
 
   /** Cabin CO2, normalised 0..1. Driven by the life-support mode. */
   co2: number

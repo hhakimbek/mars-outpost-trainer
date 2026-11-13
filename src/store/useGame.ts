@@ -11,6 +11,9 @@ import { CROP_LIST, cropById, type CropId } from '../data/crops'
 import { bedStage, harvestBed } from '../sim/greenhouse'
 import { cloneState } from '../sim/clone'
 import { HABITAT_OPS, opBlockedReason, runHabitatOp, type HabitatOpId } from '../sim/habitatOps'
+import {
+  analyseSamples, collectSample, drill, spendDriving,
+} from '../sim/expedition'
 import type {
   Assignment, MissionEvent, MissionState, Mode, PowerPlan, Projection,
   ScoreBreakdown, SolPhase, SolResult, Subsystem, Task, Zone,
@@ -106,6 +109,20 @@ interface GameStore {
   tickAirlock: (dt: number) => void
   /** Run one of the once-a-sol habitat operations. See sim/habitatOps.ts. */
   runHabitatOp: (op: HabitatOpId) => boolean
+
+  // ------------------------------------------------------------- expedition
+  /** True while the controlled crew member is driving the rover. */
+  driving: boolean
+  boardRover: () => void
+  leaveRover: () => void
+  /** Spend rover energy on distance covered. Returns false when it runs out. */
+  spendDrive: (metres: number) => boolean
+  /** Drill at a position in the field. See sim/expedition.ts. */
+  drillAt: (x: number, z: number) => boolean
+  /** Pick up a sample site by id. */
+  takeSample: (id: string) => boolean
+  /** Work the sample rack at the laboratory bench. */
+  analyseRack: () => boolean
   toggleView: () => void
   setControlled: (i: number) => void
   setZone: (crewIndex: number, zone: Zone) => void
@@ -148,6 +165,7 @@ export const useGame = create<GameStore>((set, get) => ({
   inside: false,
   airlockDir: null,
   airlockT: 0,
+  driving: false,
   selectedCrop: 'lettuce',
   selectedSiteId: DEFAULT_SITE_ID,
   pendingSeed: null,
@@ -195,6 +213,7 @@ export const useGame = create<GameStore>((set, get) => ({
       inside: false,
       airlockDir: null,
       airlockT: 0,
+      driving: false,
     })
   },
 
@@ -441,6 +460,62 @@ export const useGame = create<GameStore>((set, get) => ({
     set({ state: s })
     get().pushToast(result.message, result.warning)
     return result.ok
+  },
+
+  boardRover: () => {
+    const { state } = get()
+    if (state.roverKwh <= 0) {
+      get().pushToast(
+        'The rover has no charge. Give roverCharge some power in the plan.', true)
+      return
+    }
+    set({ driving: true })
+    get().pushToast(
+      `Aboard. ${state.roverKwh.toFixed(1)} kWh — hold E over good ground to drill, ` +
+      'E at a marked rock to collect it.')
+  },
+
+  leaveRover: () => set({ driving: false }),
+
+  spendDrive: (metres) => {
+    const s = cloneState(get().state)
+    const left = spendDriving(s, metres)
+    set({ state: s })
+    if (!left && get().driving) {
+      set({ driving: false })
+      get().pushToast(
+        'The rover is flat. You are walking back from here — and the dosimeter ' +
+        'is still running.', true)
+    }
+    return left
+  },
+
+  drillAt: (x, z) => {
+    const s = cloneState(get().state)
+    const r = drill(s, x, z)
+    set({ state: s })
+    get().pushToast(r.message, r.warning)
+    // A successful hole is the planned ice run actually carried out, so it
+    // settles the shift the player scheduled for it.
+    if (r.ok) get().confirmFieldTask('iceRun')
+    return r.ok
+  },
+
+  takeSample: (id) => {
+    const s = cloneState(get().state)
+    const r = collectSample(s, id)
+    set({ state: s })
+    get().pushToast(r.message, r.warning)
+    return r.ok
+  },
+
+  analyseRack: () => {
+    const s = cloneState(get().state)
+    const r = analyseSamples(s)
+    set({ state: s })
+    get().pushToast(r.message, r.warning)
+    if (r.ok) get().confirmFieldTask('science')
+    return r.ok
   },
 
   toggleView: () => {

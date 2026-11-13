@@ -7,6 +7,7 @@ import { terrainHeight } from './noise'
 import { softGlow } from './textures'
 import { useGame } from '../store/useGame'
 import { useField } from './fieldState'
+import { handoff, rover } from './roverState'
 import type { Zone } from '../sim/types'
 
 const EYE = 1.7
@@ -273,6 +274,8 @@ export function Astronaut() {
   // and can finish a hold-E task — while reading a modal they cannot see past.
   const modalOpen = useGame((s) => !!s.activeEvent && !s.eventResolved)
   const firstPerson = useGame((s) => s.firstPerson)
+  const driving = useGame((s) => s.driving)
+  const setNearRover = useField((s) => s.setNearRover)
 
   const keys = useRef<Keys>({})
   const yaw = useRef(Math.PI)
@@ -381,8 +384,33 @@ export function Astronaut() {
 
   // ------------------------------------------------------------- update
 
+  const nearRoverRef = useRef(false)
+
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 0.05)
+
+    // Climbing out of the rover has to put the crew member beside the vehicle,
+    // wherever that now is. The two controllers never run in the same frame,
+    // so a one-shot handoff is enough and neither needs a reference to the
+    // other.
+    if (handoff.to) {
+      pos.current.x = handoff.to[0]
+      pos.current.z = handoff.to[1]
+      pos.current.y = terrainHeight(pos.current.x, pos.current.z)
+      camVel.current.set(0, 0, 0)
+      handoff.to = null
+    }
+
+    // While the rover is being driven this controller stands down entirely:
+    // it must not move the crew member, and above all it must not fight the
+    // expedition controller for the camera.
+    if (driving) {
+      if (group.current) group.current.visible = false
+      if (nearRoverRef.current) { nearRoverRef.current = false; setNearRover(false) }
+      return
+    }
+    if (group.current) group.current.visible = true
+
     const active = phase === 'fieldOps' && !modalOpen
 
     // ---- movement input ----
@@ -629,6 +657,14 @@ export function Astronaut() {
     if (zone !== zoneRef.current) {
       zoneRef.current = zone
       setZone(controlled, zone)
+    }
+
+    // ---- is the rover within climbing-aboard distance ----
+    const roverNear =
+      Math.hypot(pos.current.x - rover.x, pos.current.z - rover.z) < 4.4
+    if (roverNear !== nearRoverRef.current) {
+      nearRoverRef.current = roverNear
+      setNearRover(roverNear)
     }
 
     // ---- focus the nearest actionable structure ----
