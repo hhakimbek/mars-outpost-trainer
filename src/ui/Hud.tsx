@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { C } from '../sim/constants'
 import { structureById, STRUCTURES } from '../data/structures'
 import { eventForSol } from '../data/events'
@@ -7,6 +7,15 @@ import { useField } from '../world/fieldState'
 import { bedStage, greenhouseSummary } from '../sim/greenhouse'
 import { cropById } from '../data/crops'
 import { GaugeRow, HabitatStrip } from './Gauges'
+import { AirlockOverlay } from './Airlock'
+
+/**
+ * The indoor HUD travels with the deck plan, so it loads with the interior
+ * rather than with the menu. The airlock cycle covers the download: by the
+ * time the hatch opens the chunk has long since landed.
+ */
+const InteriorHud = lazy(() =>
+  import('./InteriorPanel').then((m) => ({ default: m.InteriorHud })))
 
 const ZONE_LABEL: Record<string, string> = {
   shelter: 'SHIELDED CORE', habitat: 'HABITAT', rover: 'ROVER', eva: 'EVA — SURFACE',
@@ -28,6 +37,9 @@ export function Hud() {
   const outstanding = useGame((s) => s.fieldWorkOutstanding())
   const evaLeft = useGame((s) => s.evaSecondsLeft)
   const plantCrop = useGame((s) => s.plantCrop)
+  const inside = useGame((s) => s.inside)
+  const airlockDir = useGame((s) => s.airlockDir)
+  const beginAirlock = useGame((s) => s.beginAirlock)
 
   const focusedId = useField((s) => s.focusedId)
   const holdProgress = useField((s) => s.holdProgress)
@@ -55,6 +67,11 @@ export function Hud() {
         if (!harvestCrop()) plantCrop()
       }
       if (e.code === 'KeyC' && focused?.id === 'greenhouse') cycleSelectedCrop()
+      // Outside, the habitat is the one structure with no shift at it, so E
+      // there is free to mean the thing it obviously means.
+      if (e.code === 'KeyE' && !inside && !airlockDir && focused?.id === 'habitat') {
+        beginAirlock('in')
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -112,19 +129,30 @@ export function Hud() {
             </button>
           ))}
           <div className="crew-chip" style={{ justifyContent: 'center' }}>
-            <span className="tiny body-dim">ZONE: {ZONE_LABEL[member?.zone ?? 'habitat']}</span>
+            <span className="tiny body-dim">
+              ZONE: {inside ? 'HABITAT INTERIOR' : ZONE_LABEL[member?.zone ?? 'habitat']}
+            </span>
           </div>
         </div>
       </div>
 
+      {inside && (
+        <Suspense fallback={null}>
+          <InteriorHud />
+        </Suspense>
+      )}
+      <AirlockOverlay />
+
       {!locked && (
         <div className="lock-hint">
           <div className="h3">Click to look around</div>
-          <div className="small body-dim mt-s">WASD to walk · E to work · Esc to release the mouse</div>
+          <div className="small body-dim mt-s">
+            WASD to walk · E to {inside ? 'use a station' : 'work'} · Esc to release the mouse
+          </div>
         </div>
       )}
 
-      {focused && (
+      {!inside && focused && (
         <div className="prompt">
           <div className="h3">{focused.name}</div>
           <div className="tiny body-dim mt-s">{focused.fn}</div>
@@ -174,6 +202,11 @@ export function Hud() {
                 })}
               </div>
             </div>
+          ) : focused.id === 'habitat' ? (
+            <div className="mt-s small">
+              <span className="prompt-key">E</span>
+              Cycle the airlock and go inside
+            </div>
           ) : focused.task ? (
             <div className="mt-s tiny" style={{ color: 'var(--caution)' }}>
               Not scheduled today — assign it in planning (P)
@@ -197,10 +230,10 @@ export function Hud() {
 
         <div className="eva-bar">
           <div className="row spread tiny body-dim" style={{ marginBottom: 4 }}>
-            <span>EVA WINDOW</span>
+            <span>{inside ? 'EVA WINDOW — HELD' : 'EVA WINDOW'}</span>
             <span className="num">{Math.ceil(evaLeft)}s</span>
           </div>
-          <div className="eva-track">
+          <div className={`eva-track ${inside ? 'held' : ''}`}>
             <div className="eva-fill" style={{ width: `${(evaLeft / C.EVA_SECONDS) * 100}%` }} />
           </div>
         </div>

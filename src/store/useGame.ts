@@ -10,6 +10,7 @@ import { DEFAULT_SITE_ID } from '../data/marsFeatures'
 import { CROP_LIST, cropById, type CropId } from '../data/crops'
 import { bedStage, harvestBed } from '../sim/greenhouse'
 import { cloneState } from '../sim/clone'
+import { HABITAT_OPS, opBlockedReason, runHabitatOp, type HabitatOpId } from '../sim/habitatOps'
 import type {
   Assignment, MissionEvent, MissionState, Mode, PowerPlan, Projection,
   ScoreBreakdown, SolPhase, SolResult, Subsystem, Task, Zone,
@@ -22,7 +23,7 @@ const SAVE_KEY = 'mot.save.v1'
  * rejected rather than half-loaded; `load` additionally heals any field that
  * is missing or non-finite, so a partial save can never poison the model.
  */
-const SAVE_VERSION = 3
+const SAVE_VERSION = 4
 
 interface Toast { id: number; text: string; warning: boolean }
 
@@ -89,6 +90,22 @@ interface GameStore {
   cycleSelectedCrop: () => void
 
   // field ops
+  /**
+   * True while the crew member you are controlling is inside the habitat.
+   *
+   * This is a view switch and a simulation fact at once: inside, the surface
+   * scene is not rendered at all, the EVA window stops running down, and the
+   * radiation zone is the shielded core. The habitat is worth being in.
+   */
+  inside: boolean
+  /** Airlock cycle: null, or which way through it the crew member is going. */
+  airlockDir: 'in' | 'out' | null
+  /** Airlock cycle progress, 0..1. */
+  airlockT: number
+  beginAirlock: (dir: 'in' | 'out') => void
+  tickAirlock: (dt: number) => void
+  /** Run one of the once-a-sol habitat operations. See sim/habitatOps.ts. */
+  runHabitatOp: (op: HabitatOpId) => boolean
   toggleView: () => void
   setControlled: (i: number) => void
   setZone: (crewIndex: number, zone: Zone) => void
@@ -128,6 +145,9 @@ export const useGame = create<GameStore>((set, get) => ({
   evaSecondsLeft: C.EVA_SECONDS,
   reduceMotion: false,
   firstPerson: false,
+  inside: false,
+  airlockDir: null,
+  airlockT: 0,
   selectedCrop: 'lettuce',
   selectedSiteId: DEFAULT_SITE_ID,
   pendingSeed: null,
@@ -172,6 +192,9 @@ export const useGame = create<GameStore>((set, get) => ({
       selectedSiteId: site,
       phase: 'briefing',
       evaSecondsLeft: C.EVA_SECONDS,
+      inside: false,
+      airlockDir: null,
+      airlockT: 0,
     })
   },
 
@@ -379,6 +402,47 @@ export const useGame = create<GameStore>((set, get) => ({
 
   // ------------------------------------------------------------- field ops
 
+  /**
+   * Start an airlock cycle.
+   *
+   * The cycle is not decoration. Going out means suiting up and pumping the
+   * lock down to Martian pressure; coming in means repressurising and brushing
+   * perchlorate dust off the suit before it reaches the living space. It takes
+   * real seconds of the EVA window either way, which is the honest reason not
+   * to pop outside for one small job.
+   */
+  beginAirlock: (dir) => {
+    if (get().airlockDir) return
+    set({ airlockDir: dir, airlockT: 0 })
+  },
+
+  tickAirlock: (dt) => {
+    const { airlockDir, airlockT } = get()
+    if (!airlockDir) return
+    const t = airlockT + dt / C.AIRLOCK_SECONDS
+    if (t < 1) { set({ airlockT: t }); return }
+
+    const goingIn = airlockDir === 'in'
+    set({ airlockDir: null, airlockT: 0, inside: goingIn })
+    get().pushToast(goingIn
+      ? 'Airlock repressurised. Welcome inside.'
+      : 'Airlock cycled. Surface pressure — about 6 mbar.')
+  },
+
+  runHabitatOp: (op) => {
+    const { state, controlled } = get()
+    const blocked = opBlockedReason(state, op)
+    if (blocked) {
+      get().pushToast(`${HABITAT_OPS[op].name}: ${blocked.toLowerCase()}.`, true)
+      return false
+    }
+    const s = cloneState(state)
+    const result = runHabitatOp(s, op, controlled)
+    set({ state: s })
+    get().pushToast(result.message, result.warning)
+    return result.ok
+  },
+
   toggleView: () => {
     const next = !get().firstPerson
     set({ firstPerson: next })
@@ -408,7 +472,13 @@ export const useGame = create<GameStore>((set, get) => ({
     const crew = state.crew.map((m, i) =>
       i === controlled ? { ...m, dose: m.dose + rate * inGameHours } : m)
 
-    const left = Math.max(evaSecondsLeft - dt, 0)
+    // The EVA window is a window on the *surface*. Inside the habitat the
+    // crew is on habitat consumables and the clock has no business running —
+    // which is also what makes stepping inside a real decision rather than a
+    // scene change.
+    const left = get().inside
+      ? evaSecondsLeft
+      : Math.max(evaSecondsLeft - dt, 0)
     set({ state: { ...state, crew }, evaSecondsLeft: left })
 
     if (left <= 0) {

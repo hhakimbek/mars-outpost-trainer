@@ -253,6 +253,14 @@ export interface MissionState {
   wear: number
   /** Sol on which the last maintenance inspection was carried out. */
   lastInspection: number
+  /**
+   * Habitat operations already run this sol. See sim/habitatOps.ts.
+   *
+   * Cleared when the sol advances. This single list is what keeps the indoor
+   * stations from being an unlimited source of crew condition: each one is a
+   * once-a-sol decision with a price, not a button.
+   */
+  habitatOpsUsed: string[]
   /** True while the comms link is funded — gates the forecast. */
   telemetry: boolean
   faultsFixed: number

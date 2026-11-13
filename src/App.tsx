@@ -31,12 +31,21 @@ const GlobeScene = lazy(() => import('./world/MarsGlobe').then((m) => ({ default
 const SiteSelect = lazy(() => import('./ui/SiteSelect').then((m) => ({ default: m.SiteSelect })))
 
 /**
+ * The habitat interior is a third scene, at a third scale: 16 metres across,
+ * lit by ceiling panels, with no sky and no terrain. It shares nothing with
+ * the surface, so it is its own chunk and only one of the two is ever mounted.
+ */
+const InteriorScene = lazy(() =>
+  import('./world/Interior').then((m) => ({ default: m.InteriorScene })))
+
+/**
  * Drives the Field Ops clock. Kept outside the 3D tree so the EVA window keeps
  * running even while a modal is covering the canvas.
  */
 function FieldClock() {
   const phase = useGame((s) => s.phase)
   const tick = useGame((s) => s.tickFieldOps)
+  const tickAirlock = useGame((s) => s.tickAirlock)
   const last = useRef(performance.now())
 
   useEffect(() => {
@@ -48,11 +57,15 @@ function FieldClock() {
       const dt = Math.min((now - last.current) / 1000, 0.25)
       last.current = now
       tick(dt)
+      // The airlock runs on the same clock. Driving it from outside the 3D
+      // tree means the cycle keeps going across the moment where one canvas
+      // unmounts and the other mounts — which is exactly when it happens.
+      tickAirlock(dt)
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [phase, tick])
+  }, [phase, tick, tickAirlock])
 
   return null
 }
@@ -69,6 +82,7 @@ export default function App() {
   const selectedSiteId = useGame((s) => s.selectedSiteId)
   const selectSite = useGame((s) => s.selectSite)
   const landingComplete = useGame((s) => s.landingComplete)
+  const inside = useGame((s) => s.inside)
 
   // Warm the world chunk the moment the app is interactive rather than when
   // the player commits to a mission.
@@ -82,7 +96,8 @@ export default function App() {
   // The 3D world is mounted for every in-mission phase so the outpost stays
   // visible behind the panels — a modal over a live Mars reads far better
   // than a modal over a flat colour.
-  const onSurface = phase !== 'menu' && phase !== 'howto' && !inOrbit
+  const inMission = phase !== 'menu' && phase !== 'howto' && !inOrbit
+  const onSurface = inMission && !inside
 
   return (
     <div className="app">
@@ -90,6 +105,14 @@ export default function App() {
         <div className="canvas-wrap">
           <Suspense fallback={<SceneFallback />}>
             <Scene />
+          </Suspense>
+        </div>
+      )}
+
+      {inMission && inside && (
+        <div className="canvas-wrap">
+          <Suspense fallback={<SceneFallback />}>
+            <InteriorScene />
           </Suspense>
         </div>
       )}

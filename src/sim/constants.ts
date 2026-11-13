@@ -232,6 +232,50 @@ export const C = {
   EVA_SECONDS: 180,              // GAME   Field Ops window in real seconds
   EVA_HOURS: 6,                  // GAME   in-game hours that window represents
   INTERACT_RANGE: 4.5,           // GAME   metres
+  // ---------------------------------------------------------------- habitat
+  //
+  // The cost of the three things the crew can do indoors between shifts. Each
+  // can be run once a sol — see sim/habitatOps.ts for why that limit is the
+  // whole design. Every figure here is GAME: the trades are real, the numbers
+  // are tuned so that none of them is free and none is a dominant move.
+
+  /**
+   * Seconds to cycle the airlock, each way. GAME
+   *
+   * A real cycle is minutes — suit checks, pump-down to 6 mbar, dust
+   * mitigation on the way back in. Compressed here, but kept long enough to
+   * be felt: it is charged against the EVA window, so the lesson that nobody
+   * goes outside for one small job survives the compression.
+   */
+  AIRLOCK_SECONDS: 3.4,
+
+  /** Shared meal: meals consumed beyond the sol's normal four. GAME */
+  MEAL_FOOD: 2,
+  /** Shared meal: litres of water for cooking and cleaning up. GAME */
+  MEAL_WATER: 5,
+  /** Shared meal: condition restored to every crew member. GAME */
+  MEAL_HEALTH: 5,
+  /** Shared meal: fatigue removed from every crew member. GAME */
+  MEAL_FATIGUE: 6,
+
+  /** Treatment: litres of water per course. GAME */
+  TREAT_WATER: 6,
+  /** Treatment: condition restored to the worst-off crew member. GAME */
+  TREAT_HEALTH: 12,
+  /** Treatment: extra condition when the mission medic runs it. GAME */
+  TREAT_MEDIC_BONUS: 7,
+  /** Treatment: fatigue the patient loses as well. GAME */
+  TREAT_FATIGUE: 5,
+  /** Above this condition, treatment is refused — it is not a health top-up. GAME */
+  TREAT_CEILING: 88,
+
+  /** Hygiene cycle: litres drawn. Most of it returns through the recycler. GAME */
+  HYGIENE_WATER: 9,
+  /** Hygiene cycle: cleanliness restored, 0..1. GAME */
+  HYGIENE_CLEAN: 0.18,
+  /** Hygiene cycle: condition restored to every crew member. GAME */
+  HYGIENE_HEALTH: 2,
+
 } as const
 
 export const TASK_HOURS = {

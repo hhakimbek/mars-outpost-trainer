@@ -662,3 +662,57 @@ button:disabled { cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   .bed-fill, .crop-btn { transition: none; }
 }
+
+/* ------------------------------------------------------- habitat interior */
+
+/*
+ * Indoors the player needs two things the surface HUD never had to give them:
+ * which room they are standing in, and what the station in front of them
+ * costs. The room chip sits opposite the crew strip so it never collides with
+ * it, and the station prompt reuses `.prompt` so indoor and outdoor
+ * interaction look like the same verb.
+ */
+.room-chip {
+  position: absolute; left: 18px; bottom: 96px;
+  display: flex; align-items: flex-start; gap: 9px;
+  background: var(--surface); border: 1px solid var(--border-hi);
+  border-radius: 8px; padding: 9px 13px; max-width: 290px;
+  backdrop-filter: blur(12px);
+}
+.room-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; flex: none; }
+.room-name { font-weight: 650; font-size: 13px; letter-spacing: 0.01em; }
+
+.eva-track.held { opacity: 0.5; }
+.eva-track.held .eva-fill { background: #4a5a6b; }
+
+.airlock-overlay {
+  position: absolute; inset: 0; z-index: 40;
+  display: grid; place-items: center;
+  background: rgba(8, 11, 15, 0.82);
+  backdrop-filter: blur(6px);
+  animation: airlock-in 0.25s ease;
+}
+.airlock-card {
+  width: min(430px, 90vw); text-align: center;
+  background: var(--surface); border: 1px solid var(--border-hi);
+  border-radius: 12px; padding: 24px 28px;
+}
+.airlock-steps {
+  display: flex; flex-direction: column; gap: 7px;
+  margin: 16px 0 14px; text-align: left;
+}
+.airlock-step {
+  display: grid; grid-template-columns: 18px 1fr; gap: 8px;
+  font-size: 12.5px; color: var(--text-dim); opacity: 0.45;
+  transition: opacity 0.2s ease, color 0.2s ease;
+}
+.airlock-step.on { opacity: 1; color: var(--text); }
+.airlock-track {
+  height: 4px; background: #16202c; border-radius: 2px; overflow: hidden;
+}
+.airlock-fill {
+  height: 100%; background: linear-gradient(90deg, var(--o2), var(--rust));
+  transition: width 0.08s linear;
+}
+
+@keyframes airlock-in { from { opacity: 0; } to { opacity: 1; } }

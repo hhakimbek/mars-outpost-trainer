@@ -111,6 +111,7 @@ export function createInitialState(
     habTemp: C.HAB_TARGET_C,
     wear: 0.05,
     lastInspection: 0,
+    habitatOpsUsed: [],
     telemetry: true,
     faultsFixed: 0,
     brownoutSols: 0,
@@ -929,6 +930,10 @@ export function resolveSol(
 
   // 13-14. advance and judge
   s.hoursLost = 0
+  // A new sol is a new galley, a new hygiene cycle and a new course of
+  // treatment. Clearing this here, in the simulation, is what makes the limit
+  // part of the mission rather than a UI convention.
+  s.habitatOpsUsed = []
   s.sol++
   s.outcome = evaluateOutcome(s)
   s.log = [...s.log, ...solLog]

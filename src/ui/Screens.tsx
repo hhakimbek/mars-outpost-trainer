@@ -671,7 +671,8 @@ export function HowTo() {
           <ol className="small body-dim mt-s" style={{ paddingLeft: 18 }}>
             <li>Briefing — the forecast and today&rsquo;s objective</li>
             <li>Planning — set power modes and assign crew. Watch the forecast strip update live</li>
-            <li>Field operations — walk the outpost in 3D and carry out the work you scheduled</li>
+            <li>Field operations — walk the outpost and the habitat interior in 3D, and carry out
+              the work you scheduled</li>
             <li>Resolution — the simulation runs and shows every number that changed, and why</li>
             <li>Debrief — what happened, what the alternatives would have cost, what it teaches</li>
           </ol>
@@ -684,7 +685,8 @@ export function HowTo() {
             <span className="k">Mouse</span><span>Look around (click the view once to capture the mouse)</span>
             <span className="k">Shift</span><span>Run</span>
             <span className="k">Space</span><span>Jump — at 0.38 g you go noticeably higher</span>
-            <span className="k">E</span><span>Hold to carry out scheduled work at a structure</span>
+            <span className="k">E</span><span>Hold to carry out scheduled work at a structure or an indoor station</span>
+            <span className="k">E</span><span>At the habitat, cycle the airlock and go inside — and at the suit rack, come back out</span>
             <span className="k">H</span><span>Plant a crop, at the greenhouse (a ripe crop is harvested for you)</span>
             <span className="k">V</span><span>Switch between first-person and over-the-shoulder view</span>
             <span className="k">Tab</span><span>Switch which astronaut you control</span>
@@ -694,7 +696,7 @@ export function HowTo() {
         </div>
 
         <div className="card mt-m" style={{ borderColor: 'var(--caution)' }}>
-          <div className="h3" style={{ color: 'var(--caution)' }}>Three things players get wrong</div>
+          <div className="h3" style={{ color: 'var(--caution)' }}>Four things players get wrong</div>
           <p className="small body-dim mt-s">
             <strong>Planning is not doing.</strong> A task you assign shows ○ until you walk to the
             structure and hold E. An unperformed repair does nothing.
@@ -702,6 +704,12 @@ export function HowTo() {
           <p className="small body-dim mt-s">
             <strong>Plant early.</strong> A crop takes four sols. On Sol 6 you will need food, and no
             amount of power can grow it faster.
+          </p>
+          <p className="small body-dim mt-s">
+            <strong>The habitat is not scenery.</strong> Three of the shifts you can schedule —
+            science, inspection and rest — happen at a station <em>inside</em>. Walk to the habitat
+            and press E. Indoors the EVA window stops running and the radiation dose slows right
+            down, which is the whole point of having walls.
           </p>
           <p className="small body-dim mt-s">
             <strong>Dose never goes down.</strong> Rotate who does the EVA work, and install regolith
