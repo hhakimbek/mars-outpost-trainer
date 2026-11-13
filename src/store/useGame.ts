@@ -1,0 +1,396 @@
+import { create } from 'zustand'
+import { C, TASK_HOURS } from '../sim/constants'
+import {
+  applyChoiceEffects, assignableHours, canTurnOff, clampStocks, computeEnvironment, computeProjection,
+  createDefaultPlan, createInitialState, doseRate, resolveSol,
+} from '../sim/simulation'
+import { computeScore } from '../sim/scoring'
+import { eventForSol } from '../data/events'
+import { cloneState } from '../sim/clone'
+import type {
+  Assignment, MissionEvent, MissionState, Mode, PowerPlan, Projection,
+  ScoreBreakdown, SolPhase, SolResult, Subsystem, Task, Zone,
+} from '../sim/types'
+
+const SAVE_KEY = 'mot.save.v1'
+
+/**
+ * Bumped whenever MissionState gains or loses a field. An older save is
+ * rejected rather than half-loaded; `load` additionally heals any field that
+ * is missing or non-finite, so a partial save can never poison the model.
+ */
+const SAVE_VERSION = 2
+
+interface Toast { id: number; text: string; warning: boolean }
+
+interface GameStore {
+  phase: SolPhase
+  state: MissionState
+  plan: PowerPlan
+  assignments: Assignment[]
+  checkpoint: MissionState | null
+  lastResult: SolResult | null
+  activeEvent: MissionEvent | null
+  eventResolved: boolean
+  controlled: number
+  cadetName: string
+  toasts: Toast[]
+  evaSecondsLeft: number
+  reduceMotion: boolean
+
+  // navigation
+  setPhase: (p: SolPhase) => void
+  startCampaign: (seed?: number) => void
+  restartSol: () => void
+  confirmPlan: () => void
+  endSol: () => void
+  nextSol: () => void
+  quitToMenu: () => void
+
+  // decisions
+  setMode: (s: Subsystem, m: Mode) => void
+  setBatteryAuth: (v: number) => void
+  assignTask: (t: Task, crewIndex: number) => boolean
+  removeAssignment: (i: number) => void
+  confirmFieldTask: (t: Task) => void
+  chooseEventOption: (index: number) => void
+  plantCrop: () => void
+  harvestCrop: () => boolean
+
+  // field ops
+  setControlled: (i: number) => void
+  setZone: (crewIndex: number, zone: Zone) => void
+  tickFieldOps: (dt: number) => void
+
+  // readers
+  projection: () => Projection
+  score: () => ScoreBreakdown
+  usedCrewHours: () => number
+  maxCrewHours: () => number
+  fieldWorkOutstanding: () => boolean
+
+  // misc
+  pushToast: (text: string, warning?: boolean) => void
+  dismissToast: (id: number) => void
+  setCadetName: (n: string) => void
+  setReduceMotion: (v: boolean) => void
+  save: () => void
+  load: () => boolean
+  hasSave: () => boolean
+}
+
+let toastId = 0
+
+export const useGame = create<GameStore>((set, get) => ({
+  phase: 'menu',
+  state: createInitialState(20261112),
+  plan: createDefaultPlan(),
+  assignments: [],
+  checkpoint: null,
+  lastResult: null,
+  activeEvent: null,
+  eventResolved: false,
+  controlled: 0,
+  cadetName: '',
+  toasts: [],
+  evaSecondsLeft: C.EVA_SECONDS,
+  reduceMotion: false,
+
+  // ------------------------------------------------------------ navigation
+
+  setPhase: (p) => set({ phase: p }),
+
+  startCampaign: (seed = Math.floor(Date.now() / 1000) % 1000000) => {
+    const state = createInitialState(seed)
+    set({
+      state,
+      plan: createDefaultPlan(),
+      assignments: [],
+      checkpoint: state,
+      lastResult: null,
+      activeEvent: eventForSol(1) ?? null,
+      eventResolved: false,
+      controlled: 0,
+      phase: 'briefing',
+      evaSecondsLeft: C.EVA_SECONDS,
+    })
+  },
+
+  restartSol: () => {
+    // A learner who lost a sol badly should be able to retry that sol, not the
+    // whole mission. Losing twenty minutes to one bad call is discouraging.
+    const cp = get().checkpoint
+    if (!cp) return
+    set({
+      state: cloneState(cp),
+      plan: createDefaultPlan(),
+      assignments: [],
+      lastResult: null,
+      activeEvent: eventForSol(cp.sol) ?? null,
+      eventResolved: false,
+      phase: 'briefing',
+      evaSecondsLeft: C.EVA_SECONDS,
+    })
+    get().pushToast(`Sol ${cp.sol} restarted.`)
+  },
+
+  confirmPlan: () => {
+    if (get().projection().overAllocated) {
+      get().pushToast('You cannot confirm a plan that uses more energy than you have.', true)
+      return
+    }
+    set({ phase: 'fieldOps', evaSecondsLeft: C.EVA_SECONDS })
+  },
+
+  endSol: () => {
+    const { state, plan, assignments } = get()
+    const result = resolveSol(state, plan, assignments)
+    set({ state: result.next, lastResult: result, phase: 'resolution' })
+    get().save()
+  },
+
+  nextSol: () => {
+    const s = get().state
+    if (s.outcome !== 'inProgress' || s.sol > s.totalSols) {
+      set({ phase: 'results' })
+      return
+    }
+    const withEnv: MissionState = { ...cloneState(s), env: computeEnvironment(s.sol, s.seed) }
+    set({
+      state: withEnv,
+      checkpoint: cloneState(withEnv),
+      plan: createDefaultPlan(),
+      assignments: [],
+      activeEvent: eventForSol(s.sol) ?? null,
+      eventResolved: false,
+      phase: 'briefing',
+      evaSecondsLeft: C.EVA_SECONDS,
+    })
+  },
+
+  quitToMenu: () => set({ phase: 'menu' }),
+
+  // ------------------------------------------------------------- decisions
+
+  setMode: (sub, m) => {
+    // Life support and thermal have a floor: the player may throttle them and
+    // take the consequence, but cannot switch off the crew's air or heat.
+    const mode: Mode = !canTurnOff(sub) && m === 0 ? 1 : m
+    set((st) => ({ plan: { ...st.plan, modes: { ...st.plan.modes, [sub]: mode } } }))
+  },
+
+  setBatteryAuth: (v) =>
+    set((st) => ({ plan: { ...st.plan, batteryAuth: Math.min(Math.max(v, 0), 1) } })),
+
+  assignTask: (task, crewIndex) => {
+    const { assignments, state } = get()
+    const hours = TASK_HOURS[task]
+
+    const personHours = assignments
+      .filter((a) => a.crewIndex === crewIndex)
+      .reduce((t, a) => t + TASK_HOURS[a.task], 0)
+    if (personHours + hours > C.CREW_HOURS_EACH) {
+      get().pushToast(`${state.crew[crewIndex]?.name ?? 'That crew member'} has no hours left today.`, true)
+      return false
+    }
+
+    const used = assignments.reduce((t, a) => t + TASK_HOURS[a.task], 0)
+    if (used + hours > assignableHours(state)) {
+      get().pushToast('Not enough crew-hours left in the sol.', true)
+      return false
+    }
+    if (task === 'regolithShield' && state.shieldInstalled) {
+      get().pushToast('Regolith shielding is already installed.', true)
+      return false
+    }
+
+    // Tasks that exist in the 3D world are not credited until the player has
+    // actually walked over and done the work. Planning is not doing.
+    const needsField = task === 'repair' || task === 'cleanArray' || task === 'iceRun'
+    set({ assignments: [...assignments, { task, crewIndex, fieldConfirmed: !needsField }] })
+    return true
+  },
+
+  removeAssignment: (i) =>
+    set((st) => ({ assignments: st.assignments.filter((_, idx) => idx !== i) })),
+
+  confirmFieldTask: (task) => {
+    let changed = false
+    const next = get().assignments.map((a) => {
+      if (a.task === task && !a.fieldConfirmed) { changed = true; return { ...a, fieldConfirmed: true } }
+      return a
+    })
+    if (changed) {
+      set({ assignments: next })
+      get().pushToast('Field task completed.')
+    }
+  },
+
+  chooseEventOption: (index) => {
+    const { activeEvent, state } = get()
+    if (!activeEvent || get().eventResolved) return
+    const choice = activeEvent.choices[index]
+    if (!choice) return
+
+    const s = cloneState(state)
+
+    // All of the mechanical work happens in the simulation, so a choice is a
+    // real move with testable consequences rather than UI-local bookkeeping.
+    const notes = applyChoiceEffects(s, choice.effects)
+    for (const n of notes) get().pushToast(n)
+
+    // Queue the consequences that land on later sols. This mechanism is what
+    // teaches the difference between a cheap fix and a real one.
+    for (const f of choice.future ?? []) {
+      s.pending.push({ ...f, onSol: f.onSol <= s.sol ? s.sol + 1 : f.onSol })
+    }
+
+    s.decisions.push({
+      sol: s.sol,
+      eventId: activeEvent.id,
+      choiceId: choice.id,
+      quality: choice.quality,
+      label: choice.label,
+      reasoning: choice.reasoning,
+    })
+
+    set({ state: s, eventResolved: true })
+  },
+
+  plantCrop: () => {
+    const s = cloneState(get().state)
+    if (s.greenhouse.stage === 'empty' || s.greenhouse.stage === 'wilted') {
+      s.greenhouse = { stage: 'seeded', progress: 0, solsTended: 0, solsStarved: 0 }
+      // Planting in the field costs the same two crew-hours as planning it.
+      // Free planting would make the assignable task pointless.
+      s.hoursLost += TASK_HOURS.plantCrop
+      set({ state: s })
+      get().pushToast('Crop planted. It needs about four sols of light and water.')
+    }
+  },
+
+  harvestCrop: () => {
+    const s = cloneState(get().state)
+    if (s.greenhouse.stage !== 'ready') return false
+    // Tending across the growth period pays off here, which is why the
+    // botanist's crew-hours were worth spending.
+    const yieldMeals = C.HARVEST_MEALS *
+      Math.min(Math.max(0.8 + 0.1 * s.greenhouse.solsTended, 0.8), 1.3)
+    s.stocks.food += yieldMeals
+    s.stocks = clampStocks(s.stocks)
+    s.greenhouse = { stage: 'empty', progress: 0, solsTended: 0, solsStarved: 0 }
+    s.harvests++
+    set({ state: s })
+    get().pushToast(`Harvested ${Math.round(yieldMeals)} meals.`)
+    return true
+  },
+
+  // ------------------------------------------------------------- field ops
+
+  setControlled: (i) => set({ controlled: i }),
+
+  setZone: (crewIndex, zone) => {
+    set((st) => {
+      const crew = st.state.crew.map((m, i) => (i === crewIndex ? { ...m, zone } : m))
+      return { state: { ...st.state, crew } }
+    })
+  },
+
+  tickFieldOps: (dt) => {
+    const { phase, state, controlled, evaSecondsLeft } = get()
+    if (phase !== 'fieldOps') return
+
+    const member = state.crew[controlled]
+    if (!member) return
+
+    // Dose accrues in real time while outside, so the dosimeter on the HUD
+    // ticks at a rate the player can actually feel.
+    const inGameHours = (dt / C.EVA_SECONDS) * C.EVA_HOURS
+    const rate = doseRate(member.zone, state.shieldInstalled, state.env.spe)
+    const crew = state.crew.map((m, i) =>
+      i === controlled ? { ...m, dose: m.dose + rate * inGameHours } : m)
+
+    const left = Math.max(evaSecondsLeft - dt, 0)
+    set({ state: { ...state, crew }, evaSecondsLeft: left })
+
+    if (left <= 0) {
+      get().pushToast('EVA window closed — ending the sol.', true)
+      get().endSol()
+    }
+  },
+
+  // --------------------------------------------------------------- readers
+
+  projection: () => computeProjection(get().state, get().plan, get().assignments),
+  score: () => computeScore(get().state),
+  usedCrewHours: () => get().assignments.reduce((t, a) => t + TASK_HOURS[a.task], 0),
+  maxCrewHours: () => assignableHours(get().state),
+  fieldWorkOutstanding: () => get().assignments.some((a) => !a.fieldConfirmed),
+
+  // ------------------------------------------------------------------ misc
+
+  pushToast: (text, warning = false) => {
+    const id = ++toastId
+    set((st) => ({ toasts: [...st.toasts.slice(-2), { id, text, warning }] }))
+    setTimeout(() => get().dismissToast(id), 4200)
+  },
+
+  dismissToast: (id) => set((st) => ({ toasts: st.toasts.filter((t) => t.id !== id) })),
+  setCadetName: (n) => set({ cadetName: n.slice(0, 32) }),
+  setReduceMotion: (v) => set({ reduceMotion: v }),
+
+  save: () => {
+    try {
+      const { state, plan, assignments, cadetName } = get()
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ v: SAVE_VERSION, state, plan, assignments, cadetName }))
+    } catch {
+      // Private browsing or blocked storage. The game must keep working.
+    }
+  },
+
+  load: () => {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY)
+      if (!raw) return false
+      const data = JSON.parse(raw) as { v: number; state: MissionState; plan: PowerPlan; assignments: Assignment[]; cadetName?: string }
+      if (data.v !== SAVE_VERSION || !data.state) return false
+
+      // Fill in anything the saved mission is missing. A save written by an
+      // older build is the single most likely thing to be sitting in a
+      // demo machine's browser, and a missing field becomes NaN on the first
+      // arithmetic that touches it, which breaks the whole mission silently.
+      const fresh = createInitialState(data.state.seed ?? 1)
+      const healed: MissionState = { ...fresh, ...data.state }
+      for (const k of Object.keys(fresh) as (keyof MissionState)[]) {
+        const v = healed[k]
+        if (v === undefined || (typeof v === 'number' && !Number.isFinite(v))) {
+          ;(healed as unknown as Record<string, unknown>)[k] = fresh[k]
+        }
+      }
+      healed.stocks = { ...fresh.stocks, ...(data.state.stocks ?? {}) }
+      healed.crew = Array.isArray(data.state.crew) && data.state.crew.length === fresh.crew.length
+        ? data.state.crew.map((m, i) => ({ ...fresh.crew[i], ...m }))
+        : fresh.crew
+
+      set({
+        state: healed,
+        plan: data.plan ?? createDefaultPlan(),
+        assignments: data.assignments ?? [],
+        checkpoint: cloneState(healed),
+        cadetName: data.cadetName ?? '',
+        activeEvent: eventForSol(healed.sol) ?? null,
+        eventResolved: false,
+        phase: 'briefing',
+        evaSecondsLeft: C.EVA_SECONDS,
+      })
+      return true
+    } catch {
+      // A corrupt save starts a fresh mission rather than crashing.
+      return false
+    }
+  },
+
+  hasSave: () => {
+    try { return localStorage.getItem(SAVE_KEY) !== null } catch { return false }
+  },
+}))
