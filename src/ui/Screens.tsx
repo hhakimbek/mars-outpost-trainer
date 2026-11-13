@@ -593,11 +593,51 @@ export function SciencePanel() {
       tag: 'REAL', src: 'NASA — Humans in space', url: 'https://www.nasa.gov/humans-in-space/',
     },
     {
+      title: 'A crew of four lived in this habitat for 378 days',
+      body: 'The floor plan you walk around follows NASA’s Mars Dune Alpha — a 1,700 sq ft (158 m²) ' +
+        '3D-printed habitat at Johnson Space Center, used for the CHAPEA analog missions. Four private ' +
+        'crew quarters, a shared galley and wardroom, medical and laboratory workstations, technical ' +
+        'space and hygiene stations. That is also where this trainer’s crew of four comes from.',
+      tag: 'REAL', src: 'NASA — CHAPEA', url: 'https://www.nasa.gov/humans-in-space/chapea/',
+    },
+    {
+      title: 'A nuclear reactor that fits on a pallet',
+      body: 'NASA’s Kilopower project built KRUSTY and ran it at full power in 2018: a compact ' +
+        'uranium-235 fission reactor with Stirling convertors, designed in 1–10 kWe sizes. The baseline ' +
+        'for a crewed outpost was four 10 kWe units. It is the only power source on Mars that does not ' +
+        'care whether the sun is out — which is the entire reason to fly one.',
+      tag: 'REAL', src: 'NASA — Kilopower', url: 'https://www.nasa.gov/trending-stories/kilopower/',
+    },
+    {
+      title: 'The ice is really there, and it is really patchy',
+      body: 'Mars Odyssey’s neutron spectrometer found hydrogen — effectively ice — within about a metre ' +
+        'of the surface over most of the planet poleward of 45°, and Phoenix dug into solid ice at 68° N ' +
+        'in 2008. Nearer the equator it is deeper and rarer. NASA’s SWIM project exists to find the places ' +
+        'where accessible ice and good science overlap, because that is where a crew can land.',
+      tag: 'REAL', src: 'NASA — SWIM / Mars water ice',
+      url: 'https://science.nasa.gov/mars/',
+    },
+    {
+      title: 'Building on Mars costs energy, not materials',
+      body: 'In-situ resource utilisation means the feedstock is the ground you are standing on. ' +
+        'Microwave or laser sintering fuses loose regolith into blocks with no binder flown from Earth, ' +
+        'and Mars Dune Alpha was 3D-printed from a regolith simulant for exactly this reason. So in this ' +
+        'trainer a structure costs the power to sinter it and the crew-hours to put it up — and nothing else.',
+      tag: 'REAL', src: 'NASA — 3D printed habitat',
+      url: 'https://www.nasa.gov/humans-in-space/chapea/',
+    },
+    {
       title: 'What this game simplifies',
-      body: 'All resources use a single simplified rate per sol. Power is one pooled number rather than ' +
-        'separate AC/DC buses and voltages. Crop growth is four sols for any crop. Dust accumulates faster ' +
-        'than reality so you can see it inside a 7-sol mission. Radiation uses one dose figure per zone.',
-      tag: 'SIMPLIFIED', src: 'See the constants table in the source', url: 'https://science.nasa.gov/mars/',
+      body: 'Power is one pooled number rather than separate AC/DC buses and voltages. Crops grow in sols ' +
+        'rather than the 33 to 110 real days each actually takes — the real figure is on every crop card. ' +
+        'Dust accumulates faster than reality so you can see it inside a 7-sol mission. Radiation uses one ' +
+        'dose figure per zone. The deposits inside the 150 m bowl are procedural: no orbiter can resolve a ' +
+        'ten-metre ice lens, so what is reproduced is the shape of the problem, not a real map of one site. ' +
+        'And the scale: this outpost runs on about 58 kWh a sol, roughly a seventeenth of what a real ' +
+        'four-person base would draw, so the reactor and the rover are scaled to match it — the ratios are ' +
+        'faithful even where the absolute numbers are not.',
+      tag: 'SIMPLIFIED', src: 'Every constant is tagged REAL, REAL~ or GAME in the source',
+      url: 'https://science.nasa.gov/mars/',
     },
   ]
 
