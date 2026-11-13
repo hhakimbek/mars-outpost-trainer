@@ -440,14 +440,25 @@ export function Astronaut() {
     // starting and stopping eases instead of snapping.
     moveSpeed.current += ((len > 0 ? (sprinting ? 1.6 : 1) : 0) - moveSpeed.current) * Math.min(dt * 7, 1)
 
+    // Where the input actually points in the world. Kept outside the branch
+    // because the body has to turn to face the same direction it walks in.
+    let worldX = 0
+    let worldZ = 0
+
     if (len > 0) {
       moveX /= len
       moveZ /= len
       const sin = Math.sin(yaw.current)
       const cos = Math.cos(yaw.current)
-      // camera-relative, flattened so looking down never drives into the ground
-      const worldX = moveX * cos - moveZ * sin
-      const worldZ = moveX * sin + moveZ * cos
+      // Camera-relative, flattened so looking down never drives into the
+      // ground. This is the same rotation three.js applies to the camera:
+      // yaw turns the local axes by +yaw about Y, so the camera's forward
+      // (0,0,-1) becomes (-sin, -cos) and its right (1,0,0) becomes
+      // (cos, -sin). Rotating the input by -yaw instead mirrored both, which
+      // left W correct only when you happened to be facing down the Z axis
+      // and reversed outright when you faced along X.
+      worldX = moveX * cos + moveZ * sin
+      worldZ = -moveX * sin + moveZ * cos
       pos.current.x += worldX * speed * dt
       pos.current.z += worldZ * speed * dt
       walkPhase.current += dt * (sprinting ? 13 : 8.5)
@@ -494,10 +505,9 @@ export function Astronaut() {
     if (group.current) {
       group.current.position.copy(pos.current)
       if (len > 0) {
-        const target = Math.atan2(
-          moveX * Math.cos(yaw.current) - moveZ * Math.sin(yaw.current),
-          moveX * Math.sin(yaw.current) + moveZ * Math.cos(yaw.current),
-        )
+        // The suit model faces +Z, so rotation.y is read straight off the
+        // direction of travel rather than its negative.
+        const target = Math.atan2(worldX, worldZ)
         const cur = group.current.rotation.y
         let diff = target - cur
         while (diff > Math.PI) diff -= Math.PI * 2

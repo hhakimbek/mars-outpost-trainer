@@ -701,8 +701,12 @@ function Walker() {
       mx /= len; mz /= len
       const sin = Math.sin(yaw.current)
       const cos = Math.cos(yaw.current)
-      pos.current.x += (mx * cos - mz * sin) * speed * dt
-      pos.current.z += (mx * sin + mz * cos) * speed * dt
+      // Rotate the input by +yaw, the same way three.js turns the camera:
+      // forward (0,0,-1) becomes (-sin, -cos) and right (1,0,0) becomes
+      // (cos, -sin). Rotating by -yaw mirrors both, which is what made W
+      // walk backwards everywhere except along the Z axis.
+      pos.current.x += (mx * cos + mz * sin) * speed * dt
+      pos.current.z += (-mx * sin + mz * cos) * speed * dt
       walkPhase.current += dt * 9
     }
 
