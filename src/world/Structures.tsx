@@ -5,6 +5,9 @@ import { STRUCTURES } from '../data/structures'
 import { terrainHeight } from './noise'
 import { hullPanels, solarCells, hazardStripe, dustStreak, softGlow } from './textures'
 import { useGame } from '../store/useGame'
+import { bedStage } from '../sim/greenhouse'
+import { CROPS, type CropId } from '../data/crops'
+import type { CropBed } from '../sim/types'
 
 // ===========================================================================
 //  shared small parts
@@ -395,53 +398,175 @@ function SolarArray({ cleanliness }: { cleanliness: number }) {
 //  GREENHOUSE
 // ===========================================================================
 
-/** A leafy plant whose size and colour follow the growth stage. */
-function Plant({ h, wilted }: { h: number; wilted: boolean }) {
-  if (h <= 0.02) return null
-  const leaves = Math.max(3, Math.round(h * 7))
-  const green = wilted ? '#8f7f36' : '#2fbd6e'
-  const greenLight = wilted ? '#a89248' : '#4ade80'
+/**
+ * One plant, shaped by its crop.
+ *
+ * Each crop has a different silhouette because the player has to be able to
+ * tell, from inside the rack, which bed holds what — a wheat stalk, a lettuce
+ * rosette, a tomato with fruit on it and a potato bush are four readable
+ * shapes. Size follows `grown` continuously rather than snapping between
+ * stages, so a bed visibly develops across the mission.
+ */
+function Plant({
+  crop, grown, condition,
+}: {
+  crop: CropId
+  /** 0..1 of the way to harvest. */
+  grown: number
+  /** 0..1 crop health. Below ~0.35 the plant starts to look it. */
+  condition: number
+}) {
+  if (grown <= 0.02) return null
 
+  const sick = condition < 0.35
+  const def = CROPS[crop]
+  // A struggling plant goes yellow-olive and droops; a dead one is brown.
+  const leafA = sick ? '#8f7f36' : '#2fbd6e'
+  const leafB = sick ? '#a89248' : '#4ade80'
+  const droop = sick ? -0.85 : -0.2
+
+  if (crop === 'lettuce') {
+    // A rosette: no real stem, broad leaves fanning out and up from the base.
+    const h = 0.06 + grown * 0.2
+    const leaves = 7
+    return (
+      <group>
+        {Array.from({ length: leaves }, (_, i) => {
+          const a = (i / leaves) * Math.PI * 2
+          const r = 0.05 + grown * 0.12
+          return (
+            <mesh
+              key={i}
+              position={[Math.cos(a) * r, h * 0.55, Math.sin(a) * r]}
+              rotation={[droop - 0.5, a, 0.2]}
+              scale={[1, 0.45, 1]}
+            >
+              <sphereGeometry args={[0.07 + grown * 0.09, 7, 5]} />
+              <meshStandardMaterial
+                color={i % 2 ? leafA : leafB} roughness={0.7} flatShading
+              />
+            </mesh>
+          )
+        })}
+      </group>
+    )
+  }
+
+  if (crop === 'wheat') {
+    // Thin stalks with a seed head that only appears near harvest.
+    const h = 0.1 + grown * 0.62
+    const stalks = 5
+    return (
+      <group>
+        {Array.from({ length: stalks }, (_, i) => {
+          const a = i * 1.9
+          const off = 0.035
+          return (
+            <group key={i} position={[Math.cos(a) * off, 0, Math.sin(a) * off]}>
+              <mesh position={[0, h / 2, 0]} rotation={[0, 0, (i - 2) * 0.05]}>
+                <cylinderGeometry args={[0.006, 0.01, h, 5]} />
+                <meshStandardMaterial color={sick ? '#9a8c4a' : '#86b94e'} roughness={0.85} />
+              </mesh>
+              {grown > 0.6 && (
+                <mesh position={[0, h + 0.045, 0]}>
+                  <capsuleGeometry args={[0.018, 0.08, 4, 6]} />
+                  <meshStandardMaterial
+                    color={def.tint} roughness={0.8} flatShading
+                  />
+                </mesh>
+              )}
+            </group>
+          )
+        })}
+      </group>
+    )
+  }
+
+  if (crop === 'tomato') {
+    // A staked stem with leaf clusters, and fruit that ripens green to red.
+    const h = 0.1 + grown * 0.55
+    const clusters = Math.max(2, Math.round(grown * 5))
+    return (
+      <group>
+        <mesh position={[0, h / 2, 0]}>
+          <cylinderGeometry args={[0.014, 0.022, h, 6]} />
+          <meshStandardMaterial color={sick ? '#7a6a32' : '#2b8f52'} roughness={0.8} />
+        </mesh>
+        {/* the stake, because a dwarf tomato still has to be tied up */}
+        <mesh position={[0.055, h * 0.55, 0]}>
+          <cylinderGeometry args={[0.006, 0.006, h * 1.1, 4]} />
+          <meshStandardMaterial color="#b9b2a6" roughness={0.6} metalness={0.3} />
+        </mesh>
+        {Array.from({ length: clusters }, (_, i) => {
+          const t = (i + 1) / (clusters + 1)
+          const a = i * 2.3
+          return (
+            <group key={i} position={[Math.cos(a) * 0.06, h * t, Math.sin(a) * 0.06]}>
+              <mesh rotation={[droop, a, 0.3]}>
+                <sphereGeometry args={[0.07, 7, 5]} />
+                <meshStandardMaterial color={i % 2 ? leafA : leafB} roughness={0.72} flatShading />
+              </mesh>
+              {grown > 0.55 && i % 2 === 0 && (
+                <mesh position={[0.05, -0.04, 0]}>
+                  <sphereGeometry args={[0.028 + grown * 0.016, 8, 6]} />
+                  <meshStandardMaterial
+                    color={grown > 0.85 ? def.tint : '#8fbf5a'} roughness={0.35}
+                  />
+                </mesh>
+              )}
+            </group>
+          )
+        })}
+      </group>
+    )
+  }
+
+  // potato: a low bush, with the tubers implied by mounded medium below
+  const h = 0.08 + grown * 0.34
+  const leaves = Math.max(4, Math.round(grown * 9))
   return (
     <group>
-      {/* stem */}
       <mesh position={[0, h / 2, 0]}>
-        <cylinderGeometry args={[0.018, 0.028, h, 6]} />
-        <meshStandardMaterial color={wilted ? '#7a6a32' : '#2b8f52'} roughness={0.8} />
+        <cylinderGeometry args={[0.016, 0.026, h, 6]} />
+        <meshStandardMaterial color={sick ? '#7a6a32' : '#357f45'} roughness={0.85} />
       </mesh>
-      {/* leaves spiral up the stem */}
       {Array.from({ length: leaves }, (_, i) => {
-        const t = (i + 1) / (leaves + 1)
-        const a = i * 2.3
-        const droop = wilted ? -0.9 : -0.25
-        const size = 0.1 + (1 - t) * 0.12
+        const t = 0.25 + (i / leaves) * 0.75
+        const a = i * 2.1
         return (
           <mesh
             key={i}
-            position={[Math.cos(a) * 0.07, h * t, Math.sin(a) * 0.07]}
-            rotation={[droop, a, 0.3]}
+            position={[Math.cos(a) * (0.05 + t * 0.07), h * t, Math.sin(a) * (0.05 + t * 0.07)]}
+            rotation={[droop - 0.3, a, 0.25]}
+            scale={[1, 0.6, 1.3]}
           >
-            <sphereGeometry args={[size, 7, 5]} />
-            <meshStandardMaterial
-              color={i % 2 ? green : greenLight}
-              roughness={0.72}
-              flatShading
-            />
+            <sphereGeometry args={[0.055, 6, 5]} />
+            <meshStandardMaterial color={i % 2 ? leafA : leafB} roughness={0.78} flatShading />
           </mesh>
         )
       })}
+      {grown > 0.8 && (
+        <mesh position={[0, 0.02, 0]} scale={[1, 0.45, 1]}>
+          <sphereGeometry args={[0.1, 8, 6]} />
+          <meshStandardMaterial color={def.tint} roughness={0.9} />
+        </mesh>
+      )}
     </group>
   )
 }
 
-const GROWTH_HEIGHT: Record<string, number> = {
-  empty: 0, seeded: 0.07, sprouting: 0.26, growing: 0.52, ready: 0.78, wilted: 0.2,
-}
-
-function Greenhouse({ stage, lit }: { stage: string; lit: number }) {
-  const h = GROWTH_HEIGHT[stage] ?? 0
-  const wilted = stage === 'wilted'
+/**
+ * The rack.
+ *
+ * Four trays, one per simulated bed, laid out two deep and two high so each
+ * one is visible from the door. The tray a bed occupies never changes, so
+ * "bed 3" in the planning screen is always the same tray in the world.
+ */
+function Greenhouse({ beds, lit }: { beds: CropBed[]; lit: number }) {
   const glow = useMemo(() => softGlow(), [])
+
+  // tray z and y for bed 0..3, in planning order
+  const trays: [number, number][] = [[-1.3, 0.65], [1.3, 0.65], [-1.3, 1.55], [1.3, 1.55]]
 
   return (
     <group>
@@ -486,11 +611,21 @@ function Greenhouse({ stage, lit }: { stage: string; lit: number }) {
         <meshStandardMaterial color="#cfc7ba" roughness={0.75} metalness={0.1} />
       </mesh>
 
-      {/* ---- two tiers of grow racks with real plants ---- */}
-      {[-1.3, 0, 1.3].map((z) =>
-        [0.65, 1.55].map((y) => (
-          <group key={`${z}:${y}`} position={[0, y, z]}>
-            {/* tray */}
+      {/* ---- four hydroponic beds, one tray each ---- */}
+      {trays.map(([z, y], bedIndex) => {
+        const bed = beds[bedIndex]
+        const stage = bed ? bedStage(bed) : 'empty'
+        const planted = !!bed?.crop && stage !== 'empty'
+        const dead = stage === 'wilted'
+        // A dead bed still shows the collapsed remains: an empty tray and a
+        // failed crop have to look different, or the player cannot tell that
+        // something went wrong without opening a menu.
+        const grown = !planted ? 0 : dead ? 0.22 : 0.08 + bed.progress * 0.92
+        const condition = dead ? 0 : (bed?.health ?? 100) / 100
+
+        return (
+          <group key={bedIndex} position={[0, y, z]}>
+            {/* nutrient tray */}
             <mesh receiveShadow>
               <boxGeometry args={[3.4, 0.12, 0.85]} />
               <meshStandardMaterial color="#4a3a2e" roughness={0.95} />
@@ -500,15 +635,32 @@ function Greenhouse({ stage, lit }: { stage: string; lit: number }) {
               <boxGeometry args={[3.5, 0.06, 0.95]} />
               <meshStandardMaterial color="#9aa7b4" metalness={0.6} roughness={0.4} />
             </mesh>
-            {/* plants */}
-            {[-1.25, -0.75, -0.25, 0.25, 0.75, 1.25].map((x) => (
-              <group key={x} position={[x, 0.06, 0]}>
-                <Plant h={h} wilted={wilted} />
-              </group>
-            ))}
+            {/* the hydroponic feed line along the back of the tray */}
+            <mesh position={[0, 0.03, -0.38]} rotation={[0, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.022, 0.022, 3.3, 6]} />
+              <meshStandardMaterial color="#6f7d8b" metalness={0.5} roughness={0.45} />
+            </mesh>
+            {/* a bed label plate, so the trays match the planning numbers */}
+            <mesh position={[-1.78, 0.04, 0]}>
+              <boxGeometry args={[0.12, 0.1, 0.3]} />
+              <meshStandardMaterial
+                color={planted && !dead ? CROPS[bed.crop as CropId].tint : '#6b7480'}
+                roughness={0.6}
+                emissive={planted && !dead ? CROPS[bed.crop as CropId].tint : '#000000'}
+                emissiveIntensity={planted && !dead ? 0.35 : 0}
+                toneMapped={false}
+              />
+            </mesh>
+            {planted && bed.crop && (
+              [-1.25, -0.75, -0.25, 0.25, 0.75, 1.25].map((x, i) => (
+                <group key={x} position={[x, 0.06, 0]} rotation={[0, i * 1.1, 0]}>
+                  <Plant crop={bed.crop as CropId} grown={grown} condition={condition} />
+                </group>
+              ))
+            )}
           </group>
-        )),
-      )}
+        )
+      })}
 
       {/* rack uprights */}
       {[-1.7, 1.7].map((x) =>
@@ -984,7 +1136,7 @@ export function Structures() {
           {d.id === 'habitat' && <Habitat shield={state.shieldInstalled} />}
           {d.id === 'solar' && <SolarArray cleanliness={state.stocks.cleanliness} />}
           {d.id === 'greenhouse' && (
-            <Greenhouse stage={state.greenhouse.stage} lit={plan.modes.greenhouse / 3} />
+            <Greenhouse beds={state.greenhouse.beds} lit={plan.modes.greenhouse / 3} />
           )}
           {d.id === 'water' && (
             <Processor tint="#4f7fd4" kind="water" running={plan.modes.waterRecycler > 0} />

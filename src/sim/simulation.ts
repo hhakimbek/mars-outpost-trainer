@@ -1,7 +1,13 @@
 import { C, SUBSYSTEM_COST, SUBSYSTEM_PRIORITY, CANNOT_TURN_OFF, TASK_HOURS } from './constants'
 import { DEFAULT_SITE_ID, siteById, type LandingSite } from '../data/marsFeatures'
+import { cropById, type CropId } from '../data/crops'
+import {
+  advanceRack, bedStage, createGreenhouse, greenhouseSummary, plantBed,
+  rackForecast, type RackInputs,
+} from './greenhouse'
 import { mulberry32 } from './rng'
 import { cloneState } from './clone'
+import { MODE_NAMES } from './types'
 import type {
   Assignment, ChoiceEffects, CrewMember, Environment, FaultId, LogEntry, MissionState, Mode,
   PowerPlan, PowerSettlement, Projection, SolResult, Stocks, Subsystem, Task, Zone,
@@ -45,10 +51,20 @@ export const emptyStocks = (): Stocks => ({
 
 // ------------------------------------------------------------------ setup
 
+/**
+ * The crew.
+ *
+ * Four, which is the size the mission is written for: a commander who is
+ * strongest outside, an engineer who fixes things properly, a scientist who
+ * runs the rack and the instruments, and a medical officer who keeps the other
+ * three working. Each role has a real mechanical edge, so losing one to
+ * fatigue or dose costs something specific rather than a generic slot.
+ */
 const CREW_TEMPLATE: Omit<CrewMember, 'health' | 'fatigue' | 'dose' | 'zone' | 'assignedHours'>[] = [
   { name: 'Aylin Reyes',    role: 'commander', shortRole: 'CMDR', color: '#7dd3fc' },
   { name: 'Kenji Oyelaran', role: 'engineer',  shortRole: 'ENG',  color: '#fbbf24' },
   { name: 'Nadia Ferraro',  role: 'scientist', shortRole: 'SCI',  color: '#34d399' },
+  { name: 'Tomas Alvarez',  role: 'medic',     shortRole: 'MED',  color: '#f472b6' },
 ]
 
 /**
@@ -83,7 +99,7 @@ export function createInitialState(
     crew: CREW_TEMPLATE.map((t) => ({
       ...t, health: 100, fatigue: 0, dose: 0, zone: 'habitat' as Zone, assignedHours: 0,
     })),
-    greenhouse: { stage: 'empty', progress: 0, solsTended: 0, solsStarved: 0 },
+    greenhouse: createGreenhouse(),
     env: computeEnvironment(1, seed, site.id),
     shieldInstalled: false,
     o2Leak: 0,
@@ -117,7 +133,7 @@ export function createInitialState(
     `${site.lat >= 0 ? 'N' : 'S'} ${site.lon.toFixed(1)}\u00b0E, ` +
     `${Math.abs(site.elevationKm).toFixed(1)} km ` +
     `${site.elevationKm < 0 ? 'below' : 'above'} datum. ` +
-    'Three crew aboard. Earth is 14 light-minutes away.')
+    `Crew of ${C.CREW_COUNT} aboard. Earth is 14 light-minutes away.`)
 
   return state
 }
@@ -360,12 +376,35 @@ export function taskEfficiency(t: Task, m: CrewMember, co2 = 0): number {
   if (co2 >= C.CO2_SYMPTOM) e *= C.CO2_WORK_PENALTY
   if (m.role === 'commander' && taskZone(t) === 'eva') e *= 1.25
   if (m.role === 'engineer' && (t === 'repair' || t === 'inspection')) e *= 1.3
-  if (m.role === 'scientist' && t === 'tendGreenhouse') e *= 1.15
+  if (m.role === 'scientist' && (t === 'tendGreenhouse' || t === 'mixNutrients')) e *= 1.15
   if (m.role === 'scientist' && t === 'science') e *= 1.2
+  // The medical officer's shift is worth more to the crew than to the hardware:
+  // a recovery shift they run buys back noticeably more fatigue and health.
+  if (m.role === 'medic' && t === 'extraRest') e *= 1.5
   // A tired or unwell crew member does worse work, which is why rotation and
   // rest are real strategies rather than wasted hours.
   if (m.fatigue >= 70 || m.health <= 40) e *= 0.75
   return e
+}
+
+/** The first bed with no living crop in it, or -1. */
+export function firstFreeBed(s: MissionState): number {
+  return s.greenhouse.beds.findIndex((b) => {
+    const st = bedStage(b)
+    return st === 'empty' || st === 'wilted'
+  })
+}
+
+/** The planted bed in the worst condition, or -1 if the rack is bare. */
+export function worstBed(s: MissionState): number {
+  let best = -1
+  let worstHealth = Infinity
+  s.greenhouse.beds.forEach((b, i) => {
+    const st = bedStage(b)
+    if (st === 'empty' || st === 'wilted' || st === 'ready') return
+    if (b.health < worstHealth) { worstHealth = b.health; best = i }
+  })
+  return best
 }
 
 export const assignableHours = (s: MissionState): number =>
@@ -417,20 +456,38 @@ export function applyChoiceEffects(s: MissionState, e: ChoiceEffects): string[] 
     notes.push(`${e.crewHoursLost} crew-hours are gone before planning even starts.`)
   }
 
-  if (e.greenhouseStall && s.greenhouse.stage !== 'empty') {
-    s.greenhouse.solsStarved += e.greenhouseStall
-    if (s.greenhouse.solsStarved >= 2 && s.greenhouse.stage !== 'ready') {
-      s.greenhouse.stage = 'wilted'
-      s.greenhouse.progress = 0
-      notes.push('The crop could not take another sol in the dark and wilted.')
-    } else {
-      notes.push('The crop lost a sol of growth.')
+  // A rack event reaches every planted bed, which is what makes four beds a
+  // portfolio rather than four copies of the same bet.
+  if (e.greenhouseStall) {
+    for (const bed of s.greenhouse.beds) {
+      const st = bedStage(bed)
+      if (st === 'empty' || st === 'wilted' || !bed.crop) continue
+      bed.solsStarved += e.greenhouseStall
+      bed.health = clamp(bed.health - 16 * e.greenhouseStall * cropById(bed.crop).fragility, 0, 100)
+      if (bed.health <= C.GH_WILT_HEALTH) bed.progress = 0
     }
+    notes.push('The crop in the rack has lost growing time.')
   }
-  if (e.greenhouseBoost && s.greenhouse.stage !== 'empty' && s.greenhouse.stage !== 'wilted') {
-    s.greenhouse.progress = clamp(s.greenhouse.progress + e.greenhouseBoost, 0, 1)
-    if (s.greenhouse.progress >= 1) s.greenhouse.stage = 'ready'
-    notes.push('The crop jumped forward under the extra light and water.')
+
+  if (e.cropDamage) {
+    for (const bed of s.greenhouse.beds) {
+      const st = bedStage(bed)
+      if (st === 'empty' || st === 'wilted' || !bed.crop) continue
+      bed.health = clamp(bed.health - e.cropDamage * cropById(bed.crop).fragility, 0, 100)
+    }
+    notes.push('The crops have taken damage.')
+  }
+
+  if (e.nutrients) {
+    s.greenhouse.nutrients = clamp(s.greenhouse.nutrients + e.nutrients, 0, 1)
+  }
+
+  if (e.greenhouseBoost) {
+    for (const bed of s.greenhouse.beds) {
+      const st = bedStage(bed)
+      if (st === 'empty' || st === 'wilted') continue
+      bed.progress = clamp(bed.progress + e.greenhouseBoost, 0, 1)
+    }
   }
 
   s.stocks = clampStocks(s.stocks)
@@ -468,88 +525,6 @@ export const solsRemaining = (stock: number, net: number): number =>
   net >= -1e-6 ? -1 : Math.floor(stock / Math.abs(net))
 
 // ------------------------------------------------------------- greenhouse
-
-function advanceGreenhouse(
-  s: MissionState, mode: Mode, tended: boolean, solLog: LogEntry[], deltas: Stocks,
-  justPlanted = false,
-): void {
-  // Crops need light, water AND warmth. Tying growth to the habitat
-  // temperature is what links the thermal budget to the food budget — two
-  // systems the player would otherwise treat as unrelated.
-  const gh = s.greenhouse
-  if (gh.stage === 'empty') return // nothing planted, so no food will appear
-
-  // A ready crop is brought in. There is no interesting decision in whether to
-  // harvest ripe food, and leaving it as a UI-only action meant the whole food
-  // loop could not be simulated or tested.
-  if (gh.stage === 'ready') {
-    const care = clamp(0.8 + 0.1 * gh.solsTended, 0.7, 1.3)
-    const meals = Math.max(C.HARVEST_MEALS * care, C.HARVEST_MIN_MEALS)
-    s.stocks.food += meals
-    deltas.food += meals
-    s.harvests++
-    s.greenhouse = { stage: 'empty', progress: 0, solsTended: 0, solsStarved: 0 }
-    log(solLog, s.sol, 'Greenhouse',
-      `Harvested ${Math.round(meals)} meals` +
-      `${gh.solsTended >= 2 ? ' — the tending paid off' : ''}. The rack is empty again.`,
-      meals)
-    return
-  }
-
-  const hasPower = mode !== 0
-  const hasWater = s.stocks.water >= C.GREENHOUSE_WATER
-
-  if (!hasPower || !hasWater) {
-    // Seeds sown today are not yet starving — they have not germinated. Without
-    // this, planting and switching the lights on in the same sol was punished,
-    // which is exactly the sensible thing a player does.
-    if (justPlanted) return
-    gh.solsStarved++
-    log(solLog, s.sol, 'Greenhouse',
-      hasPower ? 'Greenhouse had no water — growth stalled.'
-               : 'Greenhouse had no power — growth stalled.', 0, true)
-    // A ready crop is already harvested above, so anything still here can die.
-    if (gh.solsStarved >= 2) {
-      gh.stage = 'wilted'
-      gh.progress = 0
-      log(solLog, s.sol, 'Greenhouse',
-        'The crop wilted. It must be replanted from seed.', 0, true)
-    }
-    return
-  }
-
-  gh.solsStarved = 0
-
-  const netWater = -C.GREENHOUSE_WATER * (1 - C.GREENHOUSE_RECOVERY)
-  s.stocks.water += netWater
-  deltas.water += netWater
-  log(solLog, s.sol, 'Water', 'Greenhouse irrigation (condensate recovered)', netWater)
-
-  let rate = mode === 1 ? 0.6 : mode === 2 ? 1.0 : 1.25
-  if (tended) { rate *= 1.25; gh.solsTended++ }
-
-  if (s.habTemp < C.HAB_COLD_C) {
-    rate *= C.COLD_GROWTH
-    log(solLog, s.sol, 'Greenhouse',
-      'The rack is too cold — the crop is growing at about half speed.', 0, true)
-  } else if (s.habTemp > C.HAB_TARGET_C + 2) {
-    rate *= C.WARM_GROWTH
-  }
-
-  gh.progress = clamp(gh.progress + rate / C.GROWTH_SOLS, 0, 1)
-  gh.stage =
-    gh.progress >= 1 ? 'ready' :
-    gh.progress >= 0.66 ? 'growing' :
-    gh.progress >= 0.33 ? 'sprouting' : 'seeded'
-
-  if (gh.stage === 'ready') {
-    log(solLog, s.sol, 'Greenhouse', 'Crop is ready to harvest.')
-  } else {
-    const left = Math.ceil(((1 - gh.progress) * C.GROWTH_SOLS) / Math.max(rate, 0.01))
-    log(solLog, s.sol, 'Greenhouse',
-      `Crop advanced to "${gh.stage}". Roughly ${left} sol(s) to harvest.`)
-  }
-}
 
 // ------------------------------------------------------------------- crew
 
@@ -785,11 +760,13 @@ export function resolveSol(
   const foodUsed = C.MEALS_PER_CREW * s.crew.length
   s.stocks.food -= foodUsed
   deltas.food -= foodUsed
-  log(solLog, s.sol, 'Food', 'Crew ate three meals each.', -foodUsed)
+  log(solLog, s.sol, 'Food',
+    `Crew of ${s.crew.length} ate ${C.MEALS_PER_CREW} meals each.`, -foodUsed)
 
   // crew tasks
-  let tended = false
-  let planted = false
+  const tendedBeds: number[] = []
+  const sownThisSol: number[] = []
+  let nutrientsAdded = 0
   for (const a of assignments) {
     const m = s.crew[a.crewIndex]
     if (!m || a.task === 'none') continue
@@ -801,20 +778,42 @@ export function resolveSol(
         log(solLog, s.sol, 'Power',
           `${m.name} cleaned the solar array — output restored to full.`)
         break
-      case 'tendGreenhouse':
-        tended = true
-        break
-      case 'plantCrop':
-        if (s.greenhouse.stage === 'empty' || s.greenhouse.stage === 'wilted') {
-          s.greenhouse = { stage: 'seeded', progress: 0, solsTended: 0, solsStarved: 0 }
-          planted = true
+      case 'tendGreenhouse': {
+        // One shift tends one bed. Left unspecified it goes to the bed in the
+        // worst condition, which is what a botanist would actually do.
+        const target = a.bed ?? worstBed(s)
+        if (target < 0) {
           log(solLog, s.sol, 'Greenhouse',
-            `${m.name} planted a fast crop. It needs about ${C.GROWTH_SOLS} sols of ` +
-            'light, water and warmth before it can be harvested.')
+            'There was nothing in the rack to tend — the shift was wasted.', 0, true)
+        } else {
+          tendedBeds.push(target)
+          log(solLog, s.sol, 'Greenhouse',
+            `${m.name} tended bed ${target + 1}: pruned, checked the roots and the ` +
+            'nutrient feed.')
+        }
+        break
+      }
+      case 'plantCrop': {
+        const target = a.bed ?? firstFreeBed(s)
+        const crop: CropId = a.crop ?? 'lettuce'
+        if (target < 0) {
+          log(solLog, s.sol, 'Greenhouse',
+            'Every bed is already planted — the sowing shift bought nothing.', 0, true)
+        } else if (plantBed(s.greenhouse, target, crop, s.sol)) {
+          sownThisSol.push(target)
+          const def = cropById(crop)
+          log(solLog, s.sol, 'Greenhouse',
+            `${m.name} sowed ${def.name.toLowerCase()} in bed ${target + 1}. ` +
+            `About ${def.growSols} sols to harvest at full care, and it will not grow ` +
+            `below ${MODE_NAMES[def.minLight]} light.`)
         } else {
           log(solLog, s.sol, 'Greenhouse',
-            'Planting was skipped — a crop is already growing in the rack.', 0, true)
+            `Bed ${target + 1} already holds a living crop — nothing was sown.`, 0, true)
         }
+        break
+      }
+      case 'mixNutrients':
+        nutrientsAdded += eff
         break
       case 'science': {
         const pts = 15 * eff
@@ -887,7 +886,14 @@ export function resolveSol(
     }
   }
 
-  advanceGreenhouse(s, mode('greenhouse'), tended, solLog, deltas, planted)
+  const rackInputs: RackInputs = {
+    mode: mode('greenhouse'),
+    recyclerMode: mode('waterRecycler'),
+    tendedBeds,
+    nutrientsAdded,
+    sownThisSol,
+  }
+  advanceRack(s, rackInputs, solLog, deltas)
 
   // 8. clamp and count depletions
   if (s.stocks.o2 <= 0 && before.o2 > 0) s.depletedCount++
@@ -974,16 +980,18 @@ export function computeProjection(
   const crewWater = C.WATER_PER_CREW * s.crew.length
   let netWater = crewWater * recovery - crewWater
 
-  if (plan.modes.greenhouse !== 0 && s.greenhouse.stage !== 'empty') {
-    netWater -= C.GREENHOUSE_WATER * (1 - C.GREENHOUSE_RECOVERY)
-  }
+  // The rack's forecast is computed by the rack itself, from the same crop
+  // table the growth model uses, so the planning screen and the resolution can
+  // never disagree about what a bed of tomatoes costs.
+  const rack = rackForecast(s.greenhouse, plan.modes.greenhouse)
+  if (plan.modes.greenhouse !== 0) netWater += rack.netWater
   if (willBeCold) netWater -= C.COLD_WATER_LOSS
   if (assignments.some((a) => a.task === 'iceRun') && plan.modes.roverCharge !== 0) {
     netWater += C.ICE_RUN_YIELD * siteOf(s).ice
   }
 
   let netFood = -C.MEALS_PER_CREW * s.crew.length
-  if (s.greenhouse.stage === 'ready') netFood += C.HARVEST_MEALS
+  netFood += rack.mealsIncoming
 
   const o2Sols = solsRemaining(s.stocks.o2, netO2)
   const waterSols = solsRemaining(s.stocks.water, netWater)
@@ -1008,16 +1016,44 @@ export function computeProjection(
   }
   if (o2Sols >= 0 && o2Sols <= 2) risks.push('Oxygen runs out within two sols at this setting.')
   if (waterSols >= 0 && waterSols <= 2) risks.push('Water runs out within two sols at this setting.')
+  const gh = greenhouseSummary(s.greenhouse)
+
   if (foodSols >= 0 && foodSols <= 2) {
-    risks.push(s.greenhouse.stage === 'empty'
-      ? 'Food runs out within two sols and nothing is planted. A crop needs four sols.'
-      : 'Food runs out within two sols. The crop has to land before then.')
+    risks.push(gh.planted === 0
+      ? 'Food runs out within two sols and every bed is empty. The fastest crop still takes three.'
+      : 'Food runs out within two sols. A bed has to come in before then.')
   }
-  if (plan.modes.greenhouse === 0 && s.greenhouse.stage !== 'empty' && s.greenhouse.stage !== 'ready') {
-    risks.push('Grow lights are off. Two sols without light and the crop is lost.')
+  if (plan.modes.greenhouse === 0 && gh.planted > gh.ready) {
+    risks.push('Grow lights are off. Two sols without light and the beds are lost.')
   }
-  if (s.greenhouse.stage === 'empty' && s.sol <= 3) {
-    risks.push('Nothing is planted. The crop needs four sols, and the stores run out on sol 6.')
+  if (rack.willStall && plan.modes.greenhouse !== 0) {
+    risks.push('A planted bed needs brighter light than this and will not grow at all.')
+  }
+  if (gh.planted === 0 && s.sol <= 3) {
+    risks.push(
+      `Nothing is planted. The pantry runs out on sol ` +
+      `${s.sol + Math.max(solsRemaining(s.stocks.food, netFood), 0)}, and even lettuce ` +
+      'takes three sols.')
+  }
+  if (s.greenhouse.nutrients <= 0.12 && gh.planted > 0) {
+    risks.push('The hydroponic nutrient reservoir is nearly dry. Growth halves when it empties.')
+  }
+  // The forecast has to warn before the mould, not after: it re-runs the same
+  // transpiration arithmetic the rack will run tonight.
+  const growingBeds = gh.planted - gh.ready
+  if (growingBeds > 0 && plan.modes.greenhouse !== 0) {
+    const projected = s.greenhouse.humidity + C.GH_HUMIDITY_PER_BED * growingBeds
+    const target = C.GH_HUMIDITY_TARGET[plan.modes.greenhouse]
+    const after = projected - Math.min(
+      C.GH_DEHUMIDIFY[plan.modes.greenhouse], Math.max(projected - target, 0))
+    if (after >= C.GH_HUMIDITY_HIGH) {
+      risks.push(
+        `${growingBeds} growing beds transpire more than the dehumidifier can remove at ` +
+        'this greenhouse setting — the rack goes mouldy and the crops lose condition.')
+    }
+  }
+  if (gh.wilted > 0) {
+    risks.push(`${gh.wilted} bed${gh.wilted === 1 ? '' : 's'} died and must be replanted from seed.`)
   }
   // The quietest way to lose this mission is to command the power plan
   // perfectly and never give anybody a job. Nothing else on screen says so.

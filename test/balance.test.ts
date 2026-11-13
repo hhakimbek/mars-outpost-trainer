@@ -13,6 +13,8 @@ import { computeScore } from '../src/sim/scoring'
 import { C, SUBSYSTEM_COST } from '../src/sim/constants'
 import { EVENTS } from '../src/data/events'
 import type { Assignment, MissionState, Mode, PowerPlan, Subsystem, Task } from '../src/sim/types'
+import { greenhouseSummary, plantBed } from '../src/sim/greenhouse'
+import type { CropId } from '../src/data/crops'
 
 let fails = 0
 const check = (name: string, ok: boolean, note = '') => {
@@ -27,37 +29,64 @@ type Strategy = (s: MissionState) => { plan: PowerPlan; assignments: Assignment[
 
 const A = (task: Task, crewIndex: number): Assignment => ({ task, crewIndex, fieldConfirmed: true })
 
-/** What a thoughtful player would plausibly do. */
+/** A plant-crop assignment aimed at a named bed. */
+const sow = (crewIndex: number, bed: number, crop: CropId): Assignment =>
+  ({ task: 'plantCrop', crewIndex, fieldConfirmed: true, bed, crop })
+
+/**
+ * What a thoughtful player would plausibly do.
+ *
+ * With four crew the pantry is five and a half sols deep, so the rack is the
+ * mission rather than a side activity: this strategy fills beds early, picks a
+ * light setting that the dehumidifier can actually keep up with for that many
+ * beds, and mixes nutrients before the reservoir runs dry.
+ */
 const reasonable: Strategy = (s) => {
+  const rack = greenhouseSummary(s.greenhouse)
+  const growingBeds = rack.planted - rack.ready
+
   const plan = createDefaultPlan()
   plan.modes.lifeSupport = 2
   plan.modes.thermal = 2
   plan.modes.oxygenGenerator = 2
   plan.modes.waterRecycler = 2
-  plan.modes.greenhouse = s.greenhouse.stage === 'empty' ? 0 : 2
+  plan.modes.greenhouse = growingBeds >= 3 ? 3 : growingBeds >= 1 ? 2 : 1
   plan.modes.commsScience = 1
   plan.modes.roverCharge = 0
   plan.batteryAuth = 0.5
 
   const assignments: Assignment[] = []
 
-  // A crop takes four sols and the stores run out on sol 6, so planting is the
-  // first thing a competent commander does.
-  if (s.greenhouse.stage === 'empty' || s.greenhouse.stage === 'wilted') {
-    assignments.push(A('plantCrop', 2))
-    plan.modes.greenhouse = 2 // seeds need the lights on from the start
-  } else if (s.greenhouse.stage !== 'ready') {
-    assignments.push(A('tendGreenhouse', 2))
+  // Slowest crop first: a potato sown on Sol 3 will never land, so the order
+  // beds are filled in matters as much as how many.
+  const plan_order: CropId[] = ['potato', 'lettuce', 'wheat', 'lettuce']
+  const taken = new Set<number>()
+  let sown = 0
+  while (sown < 2 && s.sol <= 2) {
+    const free = s.greenhouse.beds.findIndex(
+      (b, i) => !taken.has(i) && (!b.crop || b.health <= C.GH_WILT_HEALTH))
+    if (free < 0) break
+    taken.add(free)
+    assignments.push(sow(2, free, plan_order[free] ?? 'lettuce'))
+    sown++
+    plan.modes.greenhouse = Math.max(plan.modes.greenhouse, 2) as Mode
+  }
+
+  if (sown === 0) {
+    if (s.greenhouse.nutrients < 0.35) assignments.push(A('mixNutrients', 2))
+    else if (growingBeds > 0) assignments.push(A('tendGreenhouse', 2))
   }
 
   // Anything broken gets fixed; otherwise keep wear down and the array clean.
   const broken = s.o2Leak > 0 || s.recyclerClogged || s.arrayFault || s.thermalFault
   assignments.push(broken ? A('repair', 1) : A('inspection', 1))
   assignments.push(A('cleanArray', 0))
+  // The medical officer's recovery shift is worth 50% more than anyone else's.
+  assignments.push(A('extraRest', 3))
 
   // a storm sol is survived by shedding, not by spending
   if (s.env.dustStorm) {
-    plan.modes.greenhouse = 0
+    plan.modes.greenhouse = 1
     plan.modes.commsScience = 0
     plan.batteryAuth = 0.8
   }
@@ -194,7 +223,10 @@ section('no free lunch — every subsystem mode must cost or earn something')
 
   for (const sub of subsystems) {
     const base = createInitialState(42)
-    base.greenhouse = { stage: 'growing', progress: 0.5, solsTended: 1, solsStarved: 0 }
+    // A half-grown bed, so the greenhouse modes have something to act on.
+    plantBed(base.greenhouse, 0, 'lettuce', 1)
+    base.greenhouse.beds[0].progress = 0.5
+    base.greenhouse.beds[0].solsTended = 1
 
     // A mode only has to earn its keep in the situation it exists for. Life
     // support HIGH is pointless in clean air and essential in foul air; the
@@ -220,7 +252,13 @@ section('no free lunch — every subsystem mode must cost or earn something')
       a.stocks.food >= b.stocks.food - 1e-6 &&
       a.stocks.battery >= b.stocks.battery - 1e-6 &&
       a.stocks.science >= b.stocks.science - 1e-6 &&
-      a.greenhouse.progress >= b.greenhouse.progress - 1e-6 &&
+      greenhouseSummary(a.greenhouse).progress >=
+        greenhouseSummary(b.greenhouse).progress - 1e-6 &&
+      // Crop condition and the nutrient tank are outcomes too: a cheaper
+      // greenhouse setting that quietly lets the rack go mouldy is not free.
+      a.greenhouse.beds.every((bed, i) => bed.health >= b.greenhouse.beds[i].health - 1e-6) &&
+      a.greenhouse.humidity <= b.greenhouse.humidity + 1e-6 &&
+      a.greenhouse.nutrients >= b.greenhouse.nutrients - 1e-6 &&
       // Air quality and habitat temperature are outcomes too. Leaving them out
       // made life support and the heaters look like pure cost.
       a.co2 <= b.co2 + 1e-6 &&
@@ -313,9 +351,31 @@ section('the score tiers are all reachable')
     plan.batteryAuth = 0.5
 
     const assignments: Assignment[] = []
-    if (s.greenhouse.stage === 'empty' || s.greenhouse.stage === 'wilted') assignments.push(A('plantCrop', 2))
-    else if (s.greenhouse.stage !== 'ready') assignments.push(A('tendGreenhouse', 2))
-    else assignments.push(A('science', 2))
+    const rack = greenhouseSummary(s.greenhouse)
+    const growingBeds = rack.planted - rack.ready
+
+    // A strong commander fills the rack in the first two sols with a portfolio
+    // — the slow calorie crops for the back half, a fast crop to bridge the
+    // pantry — and then sets the light high enough to carry that many beds.
+    const order: CropId[] = ['potato', 'lettuce', 'wheat', 'lettuce']
+    const taken = new Set<number>()
+    let sown = 0
+    while (sown < 2 && s.sol <= 2) {
+      const free = s.greenhouse.beds.findIndex(
+        (b, i) => !taken.has(i) && (!b.crop || b.health <= C.GH_WILT_HEALTH))
+      if (free < 0) break
+      taken.add(free)
+      assignments.push(sow(2, free, order[free] ?? 'lettuce'))
+      sown++
+    }
+    if (sown === 0) {
+      if (s.greenhouse.nutrients < 0.4) assignments.push(A('mixNutrients', 2))
+      else if (growingBeds > 0) assignments.push(A('tendGreenhouse', 2))
+      else assignments.push(A('science', 2))
+    }
+
+    const bedsAfterSowing = growingBeds + sown
+    plan.modes.greenhouse = (bedsAfterSowing >= 3 ? 3 : bedsAfterSowing >= 1 ? 2 : 1) as Mode
 
     const broken = s.o2Leak > 0 || s.recyclerClogged || s.arrayFault || s.thermalFault
     assignments.push(broken ? A('repair', 1) : A('inspection', 1))
@@ -325,8 +385,14 @@ section('the score tiers are all reachable')
     if (!s.shieldInstalled && s.sol <= 4) assignments.push(A('regolithShield', 0))
     else assignments.push(A('cleanArray', 0))
 
+    // The medical officer keeps the crew's condition up, which is a third of
+    // the score.
+    assignments.push(A('extraRest', 3))
+
     if (s.env.dustStorm) {
-      plan.modes.greenhouse = 0
+      // The lights go to LOW rather than off: the fast crop tolerates it, and
+      // two sols of darkness kills the whole rack.
+      plan.modes.greenhouse = 1
       plan.modes.commsScience = 0
       plan.batteryAuth = 0.85
     } else {

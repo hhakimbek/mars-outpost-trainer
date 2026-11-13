@@ -1,4 +1,7 @@
-import { createInitialState, createDefaultPlan, resolveSol, computeProjection } from '../src/sim/simulation'
+import {
+  createInitialState, createDefaultPlan, firstFreeBed, resolveSol, computeProjection,
+} from '../src/sim/simulation'
+import { greenhouseSummary, plantBed } from '../src/sim/greenhouse'
 import { computeScore } from '../src/sim/scoring'
 import type { Assignment, MissionState } from '../src/sim/types'
 
@@ -15,15 +18,26 @@ const finite = (s: MissionState) =>
 const nonNegative = (s: MissionState) =>
   s.stocks.o2 >= 0 && s.stocks.water >= 0 && s.stocks.food >= 0 && s.stocks.battery >= 0
 
-// A sensible 7-sol playthrough under the current rules: plant early, keep the
-// rack lit, clean the array, and spend a shift on maintenance so the hardware
-// does not fail. The harvest is handled by the simulation.
+/**
+ * A sensible 7-sol playthrough under the current rules.
+ *
+ * Four crew eat 12 meals a sol against a pantry holding 66, so the rack is no
+ * longer optional and one bed of lettuce is no longer enough: this reference
+ * play fills the rack early with a mix of the fast crop and the calorie crops,
+ * runs the lights bright enough that the dehumidifier keeps up with that many
+ * beds, and spends a shift on nutrients before the reservoir empties.
+ */
 function playMission(seed: number) {
   let s = createInitialState(seed)
 
   for (let i = 0; i < 7; i++) {
+    const rack = greenhouseSummary(s.greenhouse)
+    const growingBeds = rack.planted - rack.ready
+
     const plan = createDefaultPlan()
-    plan.modes.greenhouse = 2
+    // The rack's light setting has to cover its own transpiration, which is
+    // what stops a full rack from being free.
+    plan.modes.greenhouse = growingBeds >= 3 ? 3 : growingBeds >= 1 ? 2 : 1
     plan.modes.commsScience = 1
     if (s.env.dustStorm) {
       // On a storm sol there is not enough energy for everything; the crop can
@@ -34,15 +48,42 @@ function playMission(seed: number) {
     }
 
     const a: Assignment[] = []
-    if (s.greenhouse.stage === 'empty' || s.greenhouse.stage === 'wilted') {
-      a.push({ task: 'plantCrop', crewIndex: 2, fieldConfirmed: true })
-    } else {
-      a.push({ task: 'tendGreenhouse', crewIndex: 2, fieldConfirmed: true })
+
+    // Fill the rack in the first two sols, slowest crop first so it has time.
+    // One slow calorie crop and one fast crop on Sol 1: the potato pays late,
+    // the lettuce bridges the gap before the pantry empties. Sowing both slow
+    // crops first leaves a sol with no food in it.
+    const sowing: ('potato' | 'wheat' | 'lettuce')[] = ['potato', 'lettuce', 'wheat', 'lettuce']
+    let sown = 0
+    const taken = new Set<number>()
+    while (sown < 2 && s.sol <= 2) {
+      const free = s.greenhouse.beds.findIndex(
+        (b, idx) => !taken.has(idx) && (!b.crop || b.health <= 1))
+      if (free < 0) break
+      taken.add(free)
+      a.push({
+        task: 'plantCrop', crewIndex: 2, fieldConfirmed: true,
+        bed: free, crop: sowing[free] ?? 'lettuce',
+      })
+      sown++
+    }
+
+    if (sown === 0) {
+      // Nutrients run down fastest when the rack is full; top them up before
+      // they hit zero rather than after.
+      if (s.greenhouse.nutrients < 0.35) {
+        a.push({ task: 'mixNutrients', crewIndex: 2, fieldConfirmed: true })
+      } else if (growingBeds > 0) {
+        a.push({ task: 'tendGreenhouse', crewIndex: 2, fieldConfirmed: true })
+      }
     }
 
     const broken = s.o2Leak > 0 || s.recyclerClogged || s.arrayFault || s.thermalFault
     a.push({ task: broken ? 'repair' : 'inspection', crewIndex: 1, fieldConfirmed: true })
     a.push({ task: s.sol === 2 ? 'regolithShield' : 'cleanArray', crewIndex: 0, fieldConfirmed: true })
+    // The fourth crew member is a medical officer; a recovery shift from them
+    // is worth more than from anyone else.
+    a.push({ task: 'extraRest', crewIndex: 3, fieldConfirmed: true })
 
     const r = resolveSol(s, plan, a)
     if (!finite(r.next)) throw new Error(`non-finite state at sol ${s.sol}`)
@@ -129,7 +170,7 @@ let gh = createInitialState(5)
 // Start past sol 3. The storm is a power crisis, not a statement about how
 // fast lettuce grows, and including it measured the wrong thing.
 gh.sol = 4
-gh.greenhouse = { stage: 'seeded', progress: 0, solsTended: 0, solsStarved: 0 }
+plantBed(gh.greenhouse, 0, 'lettuce', gh.sol)
 const ghPlan = createDefaultPlan()
 ghPlan.modes.greenhouse = 2
 ghPlan.modes.commsScience = 0   // a commander who wants the crop fed cuts science first
@@ -144,19 +185,58 @@ for (let i = 0; i < 8; i++) {
   ]
   gh = resolveSol(gh, ghPlan, upkeep).next
   solsToReady++
-  if (gh.greenhouse.stage === 'ready') break
+  if (greenhouseSummary(gh.greenhouse).ready > 0 || gh.harvests > 0) break
 }
-check('a crop needs about 4 sols when kept lit and watered',
-  solsToReady >= 3 && solsToReady <= 5, `${solsToReady} sols`)
+// Lettuce is the three-sol crop. Measured through the real resolve loop, so
+// it covers the CO2 bonus, the lamp heat and the nutrient draw as well.
+check('lettuce is ready in about three sols when kept lit and watered',
+  solsToReady >= 2 && solsToReady <= 5, `${solsToReady} sols`)
+
+// The slowest crop must genuinely be slower, or the four crops are one crop
+// with four labels.
+let spud = createInitialState(5)
+spud.sol = 4
+plantBed(spud.greenhouse, 0, 'potato', spud.sol)
+let spudSols = 0
+for (let i = 0; i < 10; i++) {
+  spud = resolveSol(spud, ghPlan, [
+    { task: 'cleanArray', crewIndex: 0, fieldConfirmed: true },
+    { task: 'inspection', crewIndex: 1, fieldConfirmed: true },
+  ]).next
+  spudSols++
+  if (spud.harvests > 0) break
+}
+check('a potato takes longer than lettuce', spudSols > solsToReady,
+  `${spudSols} sols vs ${solsToReady} for lettuce`)
 
 // And the opposite must also be true: neglect must cost growth.
 let neglected = createInitialState(5)
 neglected.sol = 4
-neglected.greenhouse = { stage: 'seeded', progress: 0, solsTended: 0, solsStarved: 0 }
+plantBed(neglected.greenhouse, 0, 'lettuce', neglected.sol)
 const darkPlan = createDefaultPlan(); darkPlan.modes.greenhouse = 0
 for (let i = 0; i < 4; i++) neglected = resolveSol(neglected, darkPlan, []).next
-check('an unlit crop never becomes ready', neglected.greenhouse.stage !== 'ready',
-  `stage ${neglected.greenhouse.stage}`)
+check('an unlit crop never becomes ready',
+  greenhouseSummary(neglected.greenhouse).ready === 0 && neglected.harvests === 0,
+  `stage ${greenhouseSummary(neglected.greenhouse).stage}`)
+
+// Wheat will not grow on dimmed lights at all — the minimum-light rule has to
+// bite, or the crop table's `minLight` column is decoration.
+let dimWheat = createInitialState(5)
+dimWheat.sol = 4
+plantBed(dimWheat.greenhouse, 0, 'wheat', dimWheat.sol)
+const dimPlan = createDefaultPlan(); dimPlan.modes.greenhouse = 1
+for (let i = 0; i < 3; i++) dimWheat = resolveSol(dimWheat, dimPlan, []).next
+check('wheat does not grow on LOW light', dimWheat.greenhouse.beds[0].progress === 0,
+  `progress ${dimWheat.greenhouse.beds[0].progress.toFixed(2)}`)
+
+// Lettuce, which tolerates dim light, must grow on the same plan — otherwise
+// the test above is measuring a broken rack rather than a crop difference.
+let dimLettuce = createInitialState(5)
+dimLettuce.sol = 4
+plantBed(dimLettuce.greenhouse, 0, 'lettuce', dimLettuce.sol)
+for (let i = 0; i < 3; i++) dimLettuce = resolveSol(dimLettuce, dimPlan, []).next
+check('lettuce does grow on LOW light', dimLettuce.greenhouse.beds[0].progress > 0,
+  `progress ${dimLettuce.greenhouse.beds[0].progress.toFixed(2)}`)
 
 console.log('\n=== scoring ===')
 const score = computeScore(a1)

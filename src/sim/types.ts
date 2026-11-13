@@ -1,3 +1,5 @@
+import type { CropId } from '../data/crops'
+
 export type SolPhase =
   | 'menu' | 'orbit' | 'descent' | 'briefing' | 'planning' | 'fieldOps'
   | 'resolution' | 'debrief' | 'results' | 'science' | 'howto'
@@ -12,12 +14,13 @@ export const MODE_NAMES = ['OFF', 'LOW', 'NOMINAL', 'HIGH'] as const
 export type Task =
   | 'none' | 'cleanArray' | 'repair' | 'tendGreenhouse' | 'science'
   | 'iceRun' | 'regolithShield' | 'inspection' | 'extraRest' | 'plantCrop'
+  | 'mixNutrients'
 
 /** The four things that can break. Each one is repairable in the field. */
 export type FaultId = 'o2Leak' | 'recyclerClogged' | 'arrayFault' | 'thermalFault'
 
 export type Zone = 'shelter' | 'habitat' | 'rover' | 'eva'
-export type CrewRole = 'commander' | 'engineer' | 'scientist'
+export type CrewRole = 'commander' | 'engineer' | 'scientist' | 'medic'
 export type GrowthStage = 'empty' | 'seeded' | 'sprouting' | 'growing' | 'ready' | 'wilted'
 export type Quality = 'poor' | 'acceptable' | 'optimal'
 export type Outcome = 'inProgress' | 'success' | 'aborted'
@@ -44,11 +47,51 @@ export interface CrewMember {
   color: string
 }
 
-export interface Greenhouse {
-  stage: GrowthStage
+/**
+ * One hydroponic bed.
+ *
+ * Each bed grows independently, so the rack is a portfolio decision: four beds
+ * of lettuce is food on Sol 3 and nothing after, four beds of potato is
+ * nothing at all inside a seven-sol mission, and the interesting plays are in
+ * between. `health` is separate from `progress` because a crop can be alive
+ * and behind schedule, or on schedule and dying.
+ */
+export interface CropBed {
+  crop: CropId | null
+  /** 0..1 of the way to harvest. */
   progress: number
+  /** 0..100. At zero the crop is lost and the bed must be replanted. */
+  health: number
   solsTended: number
   solsStarved: number
+  /** The sol it was sown on, for the debrief. */
+  plantedSol: number
+}
+
+/**
+ * The growing environment, which is what the greenhouse power mode actually
+ * buys. Every field here is read by the growth model, so none of it is a dial
+ * that does nothing.
+ */
+export interface Greenhouse {
+  beds: CropBed[]
+  /** Rack air temperature, degrees C. Follows the habitat plus lamp heat. */
+  tempC: number
+  /** Relative humidity, 0..1. Plants raise it; the dehumidifier lowers it. */
+  humidity: number
+  /**
+   * CO2 enrichment in ppm.
+   *
+   * On Mars this is the cheap input, not the scarce one: the outside air is
+   * 95% CO2, so the rack can be enriched well above Earth ambient for the cost
+   * of running a compressor. That is a genuinely counter-intuitive advantage
+   * of farming on Mars, so the model lets the player feel it.
+   */
+  co2ppm: number
+  /** Hydroponic nutrient reservoir, 0..1. Drawn down by growth, topped up by crew. */
+  nutrients: number
+  /** Meals harvested over the whole mission, for the debrief and the score. */
+  totalMeals: number
 }
 
 export interface Environment {
@@ -70,6 +113,16 @@ export interface Assignment {
   task: Task
   crewIndex: number
   fieldConfirmed: boolean
+  /**
+   * Which hydroponic bed this shift is for.
+   *
+   * `plantCrop` and `tendGreenhouse` act on one bed, not on the whole rack —
+   * that is what turns four beds into four decisions. Left undefined, planting
+   * takes the first free bed and tending takes the bed in the worst condition.
+   */
+  bed?: number
+  /** Which crop to sow. Only meaningful for `plantCrop`. */
+  crop?: CropId
 }
 
 export interface PowerSettlement {
@@ -161,10 +214,14 @@ export interface ChoiceEffects {
   shieldInstalled?: boolean
   /** Crew-hours burned by the choice itself, before the player assigns any. */
   crewHoursLost?: number
-  /** Sols of growth the crop loses outright. */
+  /** Sols of growth every planted bed loses outright. */
   greenhouseStall?: number
-  /** Growth progress granted immediately, 0..1. */
+  /** Growth progress granted immediately to every planted bed, 0..1. */
   greenhouseBoost?: number
+  /** Health lost by every planted bed, 0..100. */
+  cropDamage?: number
+  /** Change to the nutrient reservoir, -1..1. */
+  nutrients?: number
 }
 
 export interface MissionState {

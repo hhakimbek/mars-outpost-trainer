@@ -8,12 +8,13 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:sim && npm run test:world && npm run test:globe && npm run test:flow && npm run test:balance",
+    "test": "npm run test:sim && npm run test:world && npm run test:globe && npm run test:flow && npm run test:crops && npm run test:balance",
     "test:sim": "esbuild test/sim.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/simtest.mjs --log-level=error && node node_modules/.tmp/simtest.mjs",
     "test:world": "esbuild test/world.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/worldtest.mjs --log-level=error && node node_modules/.tmp/worldtest.mjs",
     "test:globe": "esbuild test/globe.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/globetest.mjs --log-level=error && node node_modules/.tmp/globetest.mjs",
     "test:flow": "esbuild test/flow.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/flowtest.mjs --log-level=error && node node_modules/.tmp/flowtest.mjs",
-    "test:balance": "esbuild test/balance.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/baltest.mjs --log-level=error && node node_modules/.tmp/baltest.mjs"
+    "test:balance": "esbuild test/balance.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/baltest.mjs --log-level=error && node node_modules/.tmp/baltest.mjs",
+    "test:crops": "esbuild test/crops.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/croptest.mjs --log-level=error && node node_modules/.tmp/croptest.mjs"
   },
   "dependencies": {
     "@react-three/drei": "9.114.3",

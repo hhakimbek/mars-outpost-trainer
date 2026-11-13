@@ -4,6 +4,7 @@ import { MODE_NAMES } from '../sim/types'
 import type { Mode, Subsystem, Task } from '../sim/types'
 import { useGame } from '../store/useGame'
 import { GaugeRow } from './Gauges'
+import { RackPanel } from './RackPanel'
 
 const SUB_INFO: Record<Subsystem, { name: string; fn: string }> = {
   lifeSupport:     { name: 'Life Support',     fn: 'CO₂ scrubbing, air circulation, lights. Cannot be switched off.' },
@@ -16,7 +17,7 @@ const SUB_INFO: Record<Subsystem, { name: string; fn: string }> = {
 }
 
 const TASKS: Task[] = [
-  'cleanArray', 'repair', 'tendGreenhouse', 'science',
+  'cleanArray', 'repair', 'tendGreenhouse', 'mixNutrients', 'science',
   'iceRun', 'regolithShield', 'inspection', 'extraRest', 'plantCrop',
 ]
 
@@ -25,7 +26,8 @@ const TASK_LABEL: Record<Task, string> = {
   none: '—',
   cleanArray: 'Clean solar array',
   repair: 'Repair',
-  tendGreenhouse: 'Tend greenhouse',
+  tendGreenhouse: 'Tend a bed',
+  mixNutrients: 'Mix nutrient batch',
   science: 'Science survey',
   iceRun: 'Rover ice run',
   regolithShield: 'Pile regolith shielding',
@@ -146,7 +148,8 @@ export function Planning() {
               <div>
                 <div className="label">Crew Hours</div>
                 <div className="tiny body-dim">
-                  3 crew &times; 8 h, minus 2 h each for exercise and medical
+                  {state.crew.length} crew &times; {C.CREW_HOURS_EACH} h, minus{' '}
+                  {C.CREW_HOURS_MANDATORY} h each for exercise and medical
                 </div>
               </div>
               <div className={`budget-num ${usedHours > maxHours ? 'over' : 'ok'}`}>
@@ -210,6 +213,9 @@ export function Planning() {
             </div>
           </div>
         </div>
+
+        {/* --------------------------------------------- the hydroponic rack */}
+        <RackPanel />
 
         {/* ------------------------------------------------- live forecast */}
         <div className="panel">

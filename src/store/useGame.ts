@@ -2,11 +2,13 @@ import { create } from 'zustand'
 import { C, TASK_HOURS } from '../sim/constants'
 import {
   applyChoiceEffects, assignableHours, canTurnOff, clampStocks, computeEnvironment, computeProjection,
-  createDefaultPlan, createInitialState, doseRate, resolveSol,
+  createDefaultPlan, createInitialState, doseRate, firstFreeBed, resolveSol,
 } from '../sim/simulation'
 import { computeScore } from '../sim/scoring'
 import { eventForSol } from '../data/events'
 import { DEFAULT_SITE_ID } from '../data/marsFeatures'
+import { CROP_LIST, cropById, type CropId } from '../data/crops'
+import { bedStage, harvestBed } from '../sim/greenhouse'
 import { cloneState } from '../sim/clone'
 import type {
   Assignment, MissionEvent, MissionState, Mode, PowerPlan, Projection,
@@ -75,12 +77,16 @@ interface GameStore {
   // decisions
   setMode: (s: Subsystem, m: Mode) => void
   setBatteryAuth: (v: number) => void
-  assignTask: (t: Task, crewIndex: number) => boolean
+  assignTask: (t: Task, crewIndex: number, bed?: number, crop?: CropId) => boolean
   removeAssignment: (i: number) => void
   confirmFieldTask: (t: Task) => void
   chooseEventOption: (index: number) => void
-  plantCrop: () => void
+  plantCrop: (bed?: number, crop?: CropId) => void
   harvestCrop: () => boolean
+  /** The crop the field controls will sow next. Cycled with C at the rack. */
+  selectedCrop: CropId
+  setSelectedCrop: (c: CropId) => void
+  cycleSelectedCrop: () => void
 
   // field ops
   toggleView: () => void
@@ -122,6 +128,7 @@ export const useGame = create<GameStore>((set, get) => ({
   evaSecondsLeft: C.EVA_SECONDS,
   reduceMotion: false,
   firstPerson: false,
+  selectedCrop: 'lettuce',
   selectedSiteId: DEFAULT_SITE_ID,
   pendingSeed: null,
 
@@ -234,7 +241,7 @@ export const useGame = create<GameStore>((set, get) => ({
   setBatteryAuth: (v) =>
     set((st) => ({ plan: { ...st.plan, batteryAuth: Math.min(Math.max(v, 0), 1) } })),
 
-  assignTask: (task, crewIndex) => {
+  assignTask: (task, crewIndex, bed, crop) => {
     const { assignments, state } = get()
     const hours = TASK_HOURS[task]
 
@@ -259,7 +266,18 @@ export const useGame = create<GameStore>((set, get) => ({
     // Tasks that exist in the 3D world are not credited until the player has
     // actually walked over and done the work. Planning is not doing.
     const needsField = task === 'repair' || task === 'cleanArray' || task === 'iceRun'
-    set({ assignments: [...assignments, { task, crewIndex, fieldConfirmed: !needsField }] })
+    set({
+      assignments: [
+        ...assignments,
+        {
+          task,
+          crewIndex,
+          fieldConfirmed: !needsField,
+          bed,
+          crop: task === 'plantCrop' ? crop ?? get().selectedCrop : crop,
+        },
+      ],
+    })
     return true
   },
 
@@ -309,32 +327,54 @@ export const useGame = create<GameStore>((set, get) => ({
     set({ state: s, eventResolved: true })
   },
 
-  plantCrop: () => {
+  plantCrop: (bed, crop) => {
     const s = cloneState(get().state)
-    if (s.greenhouse.stage === 'empty' || s.greenhouse.stage === 'wilted') {
-      s.greenhouse = { stage: 'seeded', progress: 0, solsTended: 0, solsStarved: 0 }
-      // Planting in the field costs the same two crew-hours as planning it.
-      // Free planting would make the assignable task pointless.
-      s.hoursLost += TASK_HOURS.plantCrop
-      set({ state: s })
-      get().pushToast('Crop planted. It needs about four sols of light and water.')
+    const target = bed ?? firstFreeBed(s)
+    if (target < 0) {
+      get().pushToast('Every bed already holds a living crop.', true)
+      return
     }
+    const choice = crop ?? get().selectedCrop
+    const def = cropById(choice)
+    s.greenhouse.beds[target] = {
+      crop: choice, progress: 0, health: 100, solsTended: 0, solsStarved: 0, plantedSol: s.sol,
+    }
+    // Planting in the field costs the same two crew-hours as planning it.
+    // Free planting would make the assignable task pointless.
+    s.hoursLost += TASK_HOURS.plantCrop
+    set({ state: s })
+    get().pushToast(
+      `${def.name} sown in bed ${target + 1} — about ${def.growSols} sols to harvest.`)
   },
 
   harvestCrop: () => {
     const s = cloneState(get().state)
-    if (s.greenhouse.stage !== 'ready') return false
-    // Tending across the growth period pays off here, which is why the
-    // botanist's crew-hours were worth spending.
-    const yieldMeals = C.HARVEST_MEALS *
-      Math.min(Math.max(0.8 + 0.1 * s.greenhouse.solsTended, 0.8), 1.3)
-    s.stocks.food += yieldMeals
+    let meals = 0
+    let count = 0
+    for (let i = 0; i < s.greenhouse.beds.length; i++) {
+      if (bedStage(s.greenhouse.beds[i]) !== 'ready') continue
+      meals += harvestBed(s.greenhouse, i)
+      count++
+    }
+    if (count === 0) return false
+    s.stocks.food += meals
     s.stocks = clampStocks(s.stocks)
-    s.greenhouse = { stage: 'empty', progress: 0, solsTended: 0, solsStarved: 0 }
-    s.harvests++
+    s.harvests += count
     set({ state: s })
-    get().pushToast(`Harvested ${Math.round(yieldMeals)} meals.`)
+    get().pushToast(
+      `Harvested ${Math.round(meals)} meals from ${count} bed${count === 1 ? '' : 's'}.`)
     return true
+  },
+
+  setSelectedCrop: (c) => set({ selectedCrop: c }),
+
+  cycleSelectedCrop: () => {
+    const i = CROP_LIST.findIndex((c) => c.id === get().selectedCrop)
+    const next = CROP_LIST[(i + 1) % CROP_LIST.length]
+    set({ selectedCrop: next.id })
+    get().pushToast(
+      `Next sowing: ${next.name} — ${next.growSols} sols, ${next.meals} meals, ` +
+      `${next.waterPerSol} L/sol.`)
   },
 
   // ------------------------------------------------------------- field ops

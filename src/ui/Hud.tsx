@@ -4,6 +4,8 @@ import { structureById, STRUCTURES } from '../data/structures'
 import { eventForSol } from '../data/events'
 import { useGame } from '../store/useGame'
 import { useField } from '../world/fieldState'
+import { bedStage, greenhouseSummary } from '../sim/greenhouse'
+import { cropById } from '../data/crops'
 import { GaugeRow, HabitatStrip } from './Gauges'
 
 const ZONE_LABEL: Record<string, string> = {
@@ -18,6 +20,9 @@ export function Hud() {
   const setPhase = useGame((s) => s.setPhase)
   const toggleView = useGame((s) => s.toggleView)
   const firstPerson = useGame((s) => s.firstPerson)
+  const selectedCrop = useGame((s) => s.selectedCrop)
+  const cycleSelectedCrop = useGame((s) => s.cycleSelectedCrop)
+  const harvestCrop = useGame((s) => s.harvestCrop)
   const endSol = useGame((s) => s.endSol)
   const assignments = useGame((s) => s.assignments)
   const outstanding = useGame((s) => s.fieldWorkOutstanding())
@@ -32,6 +37,7 @@ export function Hud() {
   const openTask = focused?.task && assignments.some((a) => a.task === focused.task && !a.fieldConfirmed)
   const event = eventForSol(state.sol)
   const member = state.crew[controlled]
+  const rack = greenhouseSummary(state.greenhouse)
 
   // Keyboard shortcuts that belong to the HUD rather than the 3D controller.
   useEffect(() => {
@@ -45,12 +51,15 @@ export function Hud() {
       if (e.code === 'KeyV') toggleView()
       if (e.code === 'Escape' && document.pointerLockElement) document.exitPointerLock()
       if (e.code === 'KeyH' && focused?.id === 'greenhouse') {
-        plantCrop()
+        // One key for the rack: bring in anything ripe first, otherwise sow.
+        if (!harvestCrop()) plantCrop()
       }
+      if (e.code === 'KeyC' && focused?.id === 'greenhouse') cycleSelectedCrop()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [phase, controlled, state.crew.length, setControlled, setPhase, toggleView, focused, plantCrop])
+  }, [phase, controlled, state.crew.length, setControlled, setPhase, toggleView, focused,
+      plantCrop, harvestCrop, cycleSelectedCrop])
 
   if (phase !== 'fieldOps') return null
 
@@ -130,11 +139,40 @@ export function Hud() {
               </div>
             </>
           ) : focused.id === 'greenhouse' ? (
-            <div className="mt-s small">
-              <span className="prompt-key">H</span>
-              {state.greenhouse.stage === 'ready' ? 'Harvest the crop'
-                : state.greenhouse.stage === 'empty' || state.greenhouse.stage === 'wilted' ? 'Plant a crop'
-                : `Crop is ${state.greenhouse.stage} — ${Math.round(state.greenhouse.progress * 100)}% grown`}
+            <div className="mt-s small stack gap-s">
+              <div>
+                <span className="prompt-key">H</span>
+                {rack.ready > 0
+                  ? `Harvest ${rack.ready} ripe bed${rack.ready === 1 ? '' : 's'} ` +
+                    `(${Math.round(rack.mealsReady)} meals)`
+                  : rack.planted < state.greenhouse.beds.length
+                    ? `Sow ${cropById(selectedCrop).name.toLowerCase()} in the next free bed`
+                    : 'Every bed is planted'}
+              </div>
+              <div>
+                <span className="prompt-key">C</span>
+                Next sowing: {cropById(selectedCrop).name} ·{' '}
+                {cropById(selectedCrop).growSols} sols ·{' '}
+                {cropById(selectedCrop).meals} meals ·{' '}
+                {cropById(selectedCrop).waterPerSol} L/sol
+                {cropById(selectedCrop).morale > 0
+                  ? ` · ♥ +${cropById(selectedCrop).morale} crew`
+                  : ''}
+              </div>
+              <div className="tiny body-dim">
+                {state.greenhouse.beds.map((b, i) => {
+                  const st = bedStage(b)
+                  const mark = st === 'empty' ? '·' : st === 'wilted' ? '×'
+                    : st === 'ready' ? '●' : '○'
+                  return (
+                    <span key={i} style={{ marginRight: 9 }}>
+                      {mark} {i + 1}
+                      {b.crop ? ` ${cropById(b.crop).name.split(' ').pop()}` : ''}
+                      {st !== 'empty' && st !== 'wilted' ? ` ${Math.round(b.progress * 100)}%` : ''}
+                    </span>
+                  )
+                })}
+              </div>
             </div>
           ) : focused.task ? (
             <div className="mt-s tiny" style={{ color: 'var(--caution)' }}>
