@@ -17,6 +17,20 @@ const Scene = lazy(() => import('./world/Scene').then((m) => ({ default: m.Scene
 const prefetchScene = () => { void import('./world/Scene') }
 
 /**
+ * The globe is its own chunk for the same reason: it carries the whole
+ * topography model and a 33k-vertex planet, and a player who loads a save goes
+ * straight to the surface without ever seeing it.
+ */
+const GlobeScene = lazy(() => import('./world/MarsGlobe').then((m) => ({ default: m.GlobeScene })))
+
+/**
+ * The orbit panel goes with it. It reads the height field to show the relief
+ * under each marker, so leaving it in the main chunk would pull the whole
+ * topography model onto the menu screen, which never draws a planet.
+ */
+const SiteSelect = lazy(() => import('./ui/SiteSelect').then((m) => ({ default: m.SiteSelect })))
+
+/**
  * Drives the Field Ops clock. Kept outside the 3D tree so the EVA window keeps
  * running even while a modal is covering the canvas.
  */
@@ -52,22 +66,43 @@ export default function App() {
   const phase = useGame((s) => s.phase)
   const eventResolved = useGame((s) => s.eventResolved)
   const activeEvent = useGame((s) => s.activeEvent)
+  const selectedSiteId = useGame((s) => s.selectedSiteId)
+  const selectSite = useGame((s) => s.selectSite)
+  const landingComplete = useGame((s) => s.landingComplete)
 
   // Warm the world chunk the moment the app is interactive rather than when
   // the player commits to a mission.
   useEffect(prefetchScene, [])
 
+  // Orbit and descent are the globe; everything from the briefing onward is
+  // the surface. They are different scenes at wildly different scales, so they
+  // are different canvases and only one is ever mounted.
+  const inOrbit = phase === 'orbit' || phase === 'descent'
+
   // The 3D world is mounted for every in-mission phase so the outpost stays
   // visible behind the panels — a modal over a live Mars reads far better
   // than a modal over a flat colour.
-  const inMission = phase !== 'menu' && phase !== 'howto'
+  const onSurface = phase !== 'menu' && phase !== 'howto' && !inOrbit
 
   return (
     <div className="app">
-      {inMission && (
+      {onSurface && (
         <div className="canvas-wrap">
           <Suspense fallback={<SceneFallback />}>
             <Scene />
+          </Suspense>
+        </div>
+      )}
+
+      {inOrbit && (
+        <div className="canvas-wrap">
+          <Suspense fallback={<SceneFallback />}>
+            <GlobeScene
+              selectedId={selectedSiteId}
+              onSelect={selectSite}
+              descending={phase === 'descent'}
+              onArrived={landingComplete}
+            />
           </Suspense>
         </div>
       )}
@@ -76,6 +111,11 @@ export default function App() {
 
       {phase === 'menu' && <Menu />}
       {phase === 'howto' && <HowTo />}
+      {inOrbit && (
+        <Suspense fallback={null}>
+          <SiteSelect />
+        </Suspense>
+      )}
       {phase === 'briefing' && <Briefing />}
       {phase === 'planning' && <Planning />}
       {phase === 'fieldOps' && activeEvent && !eventResolved && <EventModal />}

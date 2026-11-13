@@ -1,4 +1,5 @@
 import { C, SUBSYSTEM_COST, SUBSYSTEM_PRIORITY, CANNOT_TURN_OFF, TASK_HOURS } from './constants'
+import { DEFAULT_SITE_ID, siteById, type LandingSite } from '../data/marsFeatures'
 import { mulberry32 } from './rng'
 import { cloneState } from './clone'
 import type {
@@ -50,12 +51,26 @@ const CREW_TEMPLATE: Omit<CrewMember, 'health' | 'fatigue' | 'dose' | 'zone' | '
   { name: 'Nadia Ferraro',  role: 'scientist', shortRole: 'SCI',  color: '#34d399' },
 ]
 
-export function createInitialState(seed: number, totalSols = C.TOTAL_SOLS): MissionState {
+/**
+ * The landing site a mission is being flown from.
+ *
+ * Every read goes through here so an older save, or a state built before the
+ * site existed, falls back to the baseline instead of producing NaN power.
+ */
+export const siteOf = (s: MissionState): LandingSite => siteById(s.siteId ?? DEFAULT_SITE_ID)
+
+export function createInitialState(
+  seed: number,
+  totalSols = C.TOTAL_SOLS,
+  siteId: string = DEFAULT_SITE_ID,
+): MissionState {
+  const site = siteById(siteId)
   const state: MissionState = {
     sol: 1,
     totalSols,
     outcome: 'inProgress',
     seed,
+    siteId: site.id,
     rngCursor: 0,
     stocks: {
       o2: C.START_O2,
@@ -69,7 +84,7 @@ export function createInitialState(seed: number, totalSols = C.TOTAL_SOLS): Miss
       ...t, health: 100, fatigue: 0, dose: 0, zone: 'habitat' as Zone, assignedHours: 0,
     })),
     greenhouse: { stage: 'empty', progress: 0, solsTended: 0, solsStarved: 0 },
-    env: computeEnvironment(1, seed),
+    env: computeEnvironment(1, seed, site.id),
     shieldInstalled: false,
     o2Leak: 0,
     recyclerClogged: false,
@@ -98,7 +113,11 @@ export function createInitialState(seed: number, totalSols = C.TOTAL_SOLS): Miss
   }
 
   log(state.log, 1, 'Mission',
-    'Outpost powered up. Three crew aboard. Earth is 14 light-minutes away.')
+    `Outpost powered up at ${site.name}, ${Math.abs(site.lat).toFixed(1)}\u00b0` +
+    `${site.lat >= 0 ? 'N' : 'S'} ${site.lon.toFixed(1)}\u00b0E, ` +
+    `${Math.abs(site.elevationKm).toFixed(1)} km ` +
+    `${site.elevationKm < 0 ? 'below' : 'above'} datum. ` +
+    'Three crew aboard. Earth is 14 light-minutes away.')
 
   return state
 }
@@ -115,7 +134,20 @@ export function createDefaultPlan(): PowerPlan {
 
 // ------------------------------------------------------------ environment
 
-export function computeEnvironment(sol: number, seed: number): Environment {
+/**
+ * Weather for one sol at one place.
+ *
+ * The site is what makes the choice in orbit matter: latitude sets how much
+ * sunlight the array can ever see and how cold the night gets, and local dust
+ * climate sets how often the sky goes against you. Sol 3 is still always the
+ * storm — the teaching beat is fixed — but how hard it bites is not.
+ */
+export function computeEnvironment(
+  sol: number,
+  seed: number,
+  siteId: string = DEFAULT_SITE_ID,
+): Environment {
+  const site = siteById(siteId)
   // Sol 3 is always the dust storm and Sol 5 always the particle event: those
   // sols carry specific teaching objectives and must not be left to chance.
   const dustStorm = sol === 3
@@ -128,29 +160,38 @@ export function computeEnvironment(sol: number, seed: number): Environment {
   let headline: string
 
   if (dustStorm) {
-    tau = 5.8
-    solarFactor = C.STORM_SOLAR_FACTOR
+    tau = 5.8 * site.dust
+    // A dustier site loses more of what little light gets through.
+    solarFactor = C.STORM_SOLAR_FACTOR / Math.max(site.dust, 0.2)
     headline = 'REGIONAL DUST STORM — solar output collapsing'
   } else {
     const roll = rng.next()
-    if (roll > 0.88) {
-      tau = 0.22; solarFactor = 1.12
+    // A dusty basin gets hazy skies more often and clear skies less often.
+    const hazeThreshold = 0.18 * site.dust
+    const clearThreshold = 1 - (1 - 0.88) / Math.max(site.dust, 0.2)
+    if (roll > clearThreshold) {
+      tau = 0.22 * site.dust; solarFactor = 1.12
       headline = 'Exceptionally clear sky — solar output above plan'
-    } else if (roll < 0.18) {
-      tau = 1.15; solarFactor = 0.78
+    } else if (roll < hazeThreshold) {
+      tau = 1.15 * site.dust; solarFactor = 0.78
       headline = 'Dust haze aloft — solar output below plan'
     } else {
-      tau = rng.range(0.35, 0.65); solarFactor = rng.range(0.93, 1.03)
+      tau = rng.range(0.35, 0.65) * site.dust; solarFactor = rng.range(0.93, 1.03)
       headline = 'Nominal conditions'
     }
   }
+
+  // Latitude and local dust opacity scale everything the array can collect.
+  solarFactor *= site.solar
 
   if (spe) headline = 'SOLAR PARTICLE EVENT INBOUND — shelter the crew'
 
   return {
     solarFactor, tau, dustStorm, spe,
-    highTemp: Math.round(rng.range(-28, -8)),
-    lowTemp: Math.round(rng.range(-95, -72)),
+    // A high-latitude site runs colder, and the night is where that bites:
+    // the heater has to hold the same cabin temperature against a bigger gap.
+    highTemp: Math.round(rng.range(-28, -8) + site.nightTempC * 0.5),
+    lowTemp: Math.round(rng.range(-95, -72) + site.nightTempC),
     headline,
   }
 }
@@ -612,7 +653,7 @@ export function resolveSol(
   applyPending(s, solLog)
 
   // 2. weather
-  s.env = computeEnvironment(s.sol, s.seed)
+  s.env = computeEnvironment(s.sol, s.seed, s.siteId)
 
   // 3. equipment. Rolled before power so a dead array string bites today.
   const newFault = rollFault(s)
@@ -721,7 +762,8 @@ export function resolveSol(
   // ---- the comms link: science, and whether the player can see anything ----
   const comms = mode('commsScience')
   s.telemetry = comms >= C.TELEMETRY_MIN_MODE
-  const sciGain = C.SCIENCE_PER_SOL[comms]
+  // A site chosen for its science value returns more from the same downlink.
+  const sciGain = Math.round(C.SCIENCE_PER_SOL[comms] * siteOf(s).science)
   if (sciGain > 0) {
     s.stocks.science += sciGain
     deltas.science += sciGain
@@ -783,7 +825,8 @@ export function resolveSol(
       }
       case 'iceRun':
         if (mode('roverCharge') !== 0) {
-          const yieldL = C.ICE_RUN_YIELD * eff
+          // Shallow ice is the whole reason to accept a high-latitude site.
+          const yieldL = C.ICE_RUN_YIELD * eff * siteOf(s).ice
           s.stocks.water += yieldL
           deltas.water += yieldL
           log(solLog, s.sol, 'Water',
@@ -887,7 +930,7 @@ export function resolveSol(
   // The returned state must describe the sol the player is about to command,
   // not the one just resolved — otherwise the briefing and the planning
   // forecast would show yesterday's weather.
-  s.env = computeEnvironment(s.sol, s.seed)
+  s.env = computeEnvironment(s.sol, s.seed, s.siteId)
 
   return { next: s, power, solLog, deltas, outcome: s.outcome }
 }
@@ -936,7 +979,7 @@ export function computeProjection(
   }
   if (willBeCold) netWater -= C.COLD_WATER_LOSS
   if (assignments.some((a) => a.task === 'iceRun') && plan.modes.roverCharge !== 0) {
-    netWater += C.ICE_RUN_YIELD
+    netWater += C.ICE_RUN_YIELD * siteOf(s).ice
   }
 
   let netFood = -C.MEALS_PER_CREW * s.crew.length

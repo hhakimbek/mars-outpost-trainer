@@ -272,6 +272,7 @@ export function Astronaut() {
   // underneath it, so without this the player walks the astronaut around —
   // and can finish a hold-E task — while reading a modal they cannot see past.
   const modalOpen = useGame((s) => !!s.activeEvent && !s.eventResolved)
+  const firstPerson = useGame((s) => s.firstPerson)
 
   const keys = useRef<Keys>({})
   const yaw = useRef(Math.PI)
@@ -466,100 +467,151 @@ export function Astronaut() {
       }
     }
 
-    // ================= third-person camera =================
-    // Yaw and pitch are smoothed separately from position, so a flick of the
-    // mouse eases rather than snapping the whole frame.
-    yawSmooth.current += (yaw.current - yawSmooth.current) * Math.min(dt * 16, 1)
-    pitchSmooth.current += (pitch.current - pitchSmooth.current) * Math.min(dt * 14, 1)
-
-    const devArm = import.meta.env.DEV
-      ? ((window as unknown as { __motCam?: { arm?: number } }).__motCam?.arm ?? 0)
-      : 0
-    const armLength = devArm > 0 ? devArm : 5.0 + moveSpeed.current * 0.9
-    const shoulder = 1.4
-    const sinY = Math.sin(yawSmooth.current)
-    const cosY = Math.cos(yawSmooth.current)
-    const cosP = Math.cos(pitchSmooth.current)
-
-    scratch.desired.set(
-      pos.current.x + sinY * armLength * cosP + cosY * shoulder,
-      pos.current.y + EYE + 0.6 - Math.sin(pitchSmooth.current) * armLength,
-      pos.current.z + cosY * armLength * cosP - sinY * shoulder,
-    )
-
-    // Collision-aware boom: if a structure sits between the astronaut and the
-    // camera, pull the camera in rather than letting it clip through a wall.
+    // ================= camera =================
     //
-    // This is solved analytically against the same cylinders the player
-    // collides with, not with a scene raycast. A raycast here would have to
-    // walk the whole scene graph every frame, and it trips over sprites and
-    // points, which need a camera set on the raycaster and are not occluders
-    // anyway.
-    const boomOrigin = scratch.look.set(pos.current.x, pos.current.y + EYE, pos.current.z)
-    scratch.dir.copy(scratch.desired).sub(boomOrigin)
-    const boomDist = scratch.dir.length()
+    // Two views off the same yaw/pitch, so switching never changes where the
+    // astronaut is facing or how WASD behaves — only where the eye sits.
+    if (firstPerson) {
+      yawSmooth.current += (yaw.current - yawSmooth.current) * Math.min(dt * 22, 1)
+      pitchSmooth.current += (pitch.current - pitchSmooth.current) * Math.min(dt * 22, 1)
 
-    if (boomDist > 0.001) {
-      scratch.dir.divideScalar(boomDist)
-      const dx = scratch.dir.x
-      const dz = scratch.dir.z
-      const h2 = dx * dx + dz * dz
+      const sinY1 = Math.sin(yawSmooth.current)
+      const cosY1 = Math.cos(yawSmooth.current)
+      const cosP1 = Math.cos(pitchSmooth.current)
+      const sinP1 = Math.sin(pitchSmooth.current)
 
-      let maxT = boomDist
-      if (h2 > 1e-6) {
-        for (const s of STRUCTURES) {
-          if (s.id === 'breach') continue
-          const rad = s.radius * 0.95
-          const fx = boomOrigin.x - s.pos[0]
-          const fz = boomOrigin.z - s.pos[2]
-          const b = 2 * (fx * dx + fz * dz)
-          const c = fx * fx + fz * fz - rad * rad
-          const disc = b * b - 4 * h2 * c
-          if (disc <= 0) continue
-          const t = (-b - Math.sqrt(disc)) / (2 * h2)
-          if (t <= 0.5 || t >= maxT) continue
-          // Only an occluder if the boom would pass *through* the building,
-          // not over its roof.
-          const y = boomOrigin.y + scratch.dir.y * t
-          if (y < terrainHeight(s.pos[0], s.pos[2]) + s.radius * 1.5) maxT = t
+      // Head bob, scaled by how fast the suit is actually moving. Kept small:
+      // a heavy pressure suit in 0.38 g does not bounce, and an aggressive bob
+      // is the fastest way to make a first-person view unpleasant.
+      const bob = Math.sin(walkPhase.current * 2) * 0.035 * moveSpeed.current
+      const sway = Math.cos(walkPhase.current) * 0.022 * moveSpeed.current
+
+      camPos.current.set(
+        pos.current.x + cosY1 * sway,
+        pos.current.y + EYE + bob,
+        pos.current.z - sinY1 * sway,
+      )
+      camera.position.copy(camPos.current)
+      // The third-person spring is parked on the eye so switching back pulls
+      // out from here instead of snapping in from wherever it was left.
+      camVel.current.set(0, 0, 0)
+
+      // Forward is the direction the astronaut faces: the third-person boom
+      // sits at +(sinY, cosY), so the look direction is its negative.
+      lookTarget.current.set(
+        camPos.current.x - sinY1 * cosP1 * 10,
+        camPos.current.y + sinP1 * 10,
+        camPos.current.z - cosY1 * cosP1 * 10,
+      )
+      camera.lookAt(lookTarget.current)
+
+      // A visor is a narrower aperture than a free camera; the sprint widening
+      // still applies, from a tighter base.
+      const fpFov = 62 + moveSpeed.current * 5
+      fov.current += (fpFov - fov.current) * Math.min(dt * 5, 1)
+      const fpCam = camera as THREE.PerspectiveCamera
+      if (Math.abs(fpCam.fov - fov.current) > 0.01) {
+        fpCam.fov = fov.current
+        fpCam.updateProjectionMatrix()
+      }
+    } else {
+
+      // ================= third-person camera =================
+      // Yaw and pitch are smoothed separately from position, so a flick of the
+      // mouse eases rather than snapping the whole frame.
+      yawSmooth.current += (yaw.current - yawSmooth.current) * Math.min(dt * 16, 1)
+      pitchSmooth.current += (pitch.current - pitchSmooth.current) * Math.min(dt * 14, 1)
+
+      const devArm = import.meta.env.DEV
+        ? ((window as unknown as { __motCam?: { arm?: number } }).__motCam?.arm ?? 0)
+        : 0
+      const armLength = devArm > 0 ? devArm : 5.0 + moveSpeed.current * 0.9
+      const shoulder = 1.4
+      const sinY = Math.sin(yawSmooth.current)
+      const cosY = Math.cos(yawSmooth.current)
+      const cosP = Math.cos(pitchSmooth.current)
+
+      scratch.desired.set(
+        pos.current.x + sinY * armLength * cosP + cosY * shoulder,
+        pos.current.y + EYE + 0.6 - Math.sin(pitchSmooth.current) * armLength,
+        pos.current.z + cosY * armLength * cosP - sinY * shoulder,
+      )
+
+      // Collision-aware boom: if a structure sits between the astronaut and the
+      // camera, pull the camera in rather than letting it clip through a wall.
+      //
+      // This is solved analytically against the same cylinders the player
+      // collides with, not with a scene raycast. A raycast here would have to
+      // walk the whole scene graph every frame, and it trips over sprites and
+      // points, which need a camera set on the raycaster and are not occluders
+      // anyway.
+      const boomOrigin = scratch.look.set(pos.current.x, pos.current.y + EYE, pos.current.z)
+      scratch.dir.copy(scratch.desired).sub(boomOrigin)
+      const boomDist = scratch.dir.length()
+
+      if (boomDist > 0.001) {
+        scratch.dir.divideScalar(boomDist)
+        const dx = scratch.dir.x
+        const dz = scratch.dir.z
+        const h2 = dx * dx + dz * dz
+
+        let maxT = boomDist
+        if (h2 > 1e-6) {
+          for (const s of STRUCTURES) {
+            if (s.id === 'breach') continue
+            const rad = s.radius * 0.95
+            const fx = boomOrigin.x - s.pos[0]
+            const fz = boomOrigin.z - s.pos[2]
+            const b = 2 * (fx * dx + fz * dz)
+            const c = fx * fx + fz * fz - rad * rad
+            const disc = b * b - 4 * h2 * c
+            if (disc <= 0) continue
+            const t = (-b - Math.sqrt(disc)) / (2 * h2)
+            if (t <= 0.5 || t >= maxT) continue
+            // Only an occluder if the boom would pass *through* the building,
+            // not over its roof.
+            const y = boomOrigin.y + scratch.dir.y * t
+            if (y < terrainHeight(s.pos[0], s.pos[2]) + s.radius * 1.5) maxT = t
+          }
+        }
+
+        if (maxT < boomDist) {
+          scratch.desired.copy(boomOrigin).addScaledVector(scratch.dir, Math.max(maxT - 0.4, 1.2))
         }
       }
 
-      if (maxT < boomDist) {
-        scratch.desired.copy(boomOrigin).addScaledVector(scratch.dir, Math.max(maxT - 0.4, 1.2))
+      // never let the camera sink below the terrain
+      const camGround = terrainHeight(scratch.desired.x, scratch.desired.z) + 0.7
+      if (scratch.desired.y < camGround) scratch.desired.y = camGround
+
+      // Critically damped spring: smooth, no overshoot, and it keeps up during a
+      // sprint instead of trailing behind the way a plain lerp does.
+      const stiffness = 58
+      const damping = 2 * Math.sqrt(stiffness)
+      camVel.current.x += ((scratch.desired.x - camPos.current.x) * stiffness - camVel.current.x * damping) * dt
+      camVel.current.y += ((scratch.desired.y - camPos.current.y) * stiffness - camVel.current.y * damping) * dt
+      camVel.current.z += ((scratch.desired.z - camPos.current.z) * stiffness - camVel.current.z * damping) * dt
+      camPos.current.addScaledVector(camVel.current, dt)
+      camera.position.copy(camPos.current)
+
+      // Smoothed look target, aimed slightly ahead when moving.
+      scratch.look.set(
+        pos.current.x - sinY * moveSpeed.current * 0.5,
+        pos.current.y + EYE - 0.1,
+        pos.current.z - cosY * moveSpeed.current * 0.5,
+      )
+      lookTarget.current.lerp(scratch.look, Math.min(dt * 11, 1))
+      camera.lookAt(lookTarget.current)
+
+      // Slight FOV widening on a sprint reads as speed without motion blur.
+      const targetFov = 68 + moveSpeed.current * 4.5
+      fov.current += (targetFov - fov.current) * Math.min(dt * 5, 1)
+      const cam = camera as THREE.PerspectiveCamera
+      if (Math.abs(cam.fov - fov.current) > 0.01) {
+        cam.fov = fov.current
+        cam.updateProjectionMatrix()
       }
-    }
 
-    // never let the camera sink below the terrain
-    const camGround = terrainHeight(scratch.desired.x, scratch.desired.z) + 0.7
-    if (scratch.desired.y < camGround) scratch.desired.y = camGround
-
-    // Critically damped spring: smooth, no overshoot, and it keeps up during a
-    // sprint instead of trailing behind the way a plain lerp does.
-    const stiffness = 58
-    const damping = 2 * Math.sqrt(stiffness)
-    camVel.current.x += ((scratch.desired.x - camPos.current.x) * stiffness - camVel.current.x * damping) * dt
-    camVel.current.y += ((scratch.desired.y - camPos.current.y) * stiffness - camVel.current.y * damping) * dt
-    camVel.current.z += ((scratch.desired.z - camPos.current.z) * stiffness - camVel.current.z * damping) * dt
-    camPos.current.addScaledVector(camVel.current, dt)
-    camera.position.copy(camPos.current)
-
-    // Smoothed look target, aimed slightly ahead when moving.
-    scratch.look.set(
-      pos.current.x - sinY * moveSpeed.current * 0.5,
-      pos.current.y + EYE - 0.1,
-      pos.current.z - cosY * moveSpeed.current * 0.5,
-    )
-    lookTarget.current.lerp(scratch.look, Math.min(dt * 11, 1))
-    camera.lookAt(lookTarget.current)
-
-    // Slight FOV widening on a sprint reads as speed without motion blur.
-    const targetFov = 68 + moveSpeed.current * 4.5
-    fov.current += (targetFov - fov.current) * Math.min(dt * 5, 1)
-    const cam = camera as THREE.PerspectiveCamera
-    if (Math.abs(cam.fov - fov.current) > 0.01) {
-      cam.fov = fov.current
-      cam.updateProjectionMatrix()
     }
 
     if (!active) return
@@ -616,7 +668,11 @@ export function Astronaut() {
 
   return (
     <group ref={group}>
-      <SuitMesh color={color} walking={walkPhase.current} speed={moveSpeed.current} />
+      {/* The camera sits inside the helmet in first person, so drawing the
+          suit there would fill the screen with the back of its own head. */}
+      {!firstPerson && (
+        <SuitMesh color={color} walking={walkPhase.current} speed={moveSpeed.current} />
+      )}
       <FootDust active={moveSpeed.current > 0.2 && grounded.current} phase={walkPhase.current} />
       {/* helmet lamp */}
       <spotLight

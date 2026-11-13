@@ -423,3 +423,155 @@ button:disabled { cursor: not-allowed; }
   inset: 0;
   background: linear-gradient(180deg, #2a2f3d 0%, #6b4a38 55%, #8a5b3e 100%);
 }
+
+/* ===========================================================================
+   ORBIT — landing site selection
+   The globe owns the whole viewport; this layer is chrome over it, so every
+   block is pinned to an edge and nothing but the panel eats pointer events.
+   ========================================================================= */
+
+.orbit-ui {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.orbit-head {
+  position: absolute;
+  top: 26px;
+  left: 28px;
+  pointer-events: none;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.8);
+}
+
+.title.sm { font-size: 27px; letter-spacing: 0.04em; }
+
+.orbit-panel {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  bottom: 24px;
+  width: min(388px, 42vw);
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  pointer-events: auto;
+}
+
+.site-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+.site-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s, color 0.14s, background 0.14s;
+}
+.site-btn:hover { border-color: var(--border-hi); color: var(--text); }
+.site-btn.on {
+  border-color: var(--rust);
+  background: rgba(201, 98, 43, 0.14);
+  color: var(--text);
+}
+.site-btn-name { font-weight: 600; line-height: 1.2; }
+.site-btn-coord { font-size: 10.5px; color: var(--text-faint); }
+.site-btn.on .site-btn-coord { color: var(--rust); }
+
+.site-detail { flex: 1; min-height: 0; padding-right: 4px; }
+
+.site-coords {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  background: rgba(7, 11, 17, 0.5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+
+.traits { display: grid; gap: 7px; }
+
+.trait { display: grid; grid-template-columns: 82px 1fr 54px; align-items: center; gap: 9px; }
+.trait-label { font-size: 11px; color: var(--text-dim); }
+.trait-track {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(7, 11, 17, 0.7);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.trait-fill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; transition: width 0.2s; }
+/* the baseline tick: where the neutral site sits, so a bar reads as better
+   or worse than Jezero rather than as an absolute score */
+.trait-base { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--text-faint); }
+.trait-val { font-size: 11px; text-align: right; }
+
+.orbit-actions { margin-top: 14px; }
+
+.orbit-hint {
+  position: absolute;
+  left: 28px;
+  bottom: 24px;
+  pointer-events: none;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+}
+
+/* ---------------------------------------------------------------- descent */
+
+.descent-ui {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 7vh;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.descent-card { width: min(380px, 90vw); text-align: center; }
+
+.descent-steps { display: grid; gap: 7px; text-align: left; }
+
+.descent-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-faint);
+  transition: color 0.4s;
+}
+.descent-step.on { color: var(--text); }
+
+.descent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-hi);
+  flex: none;
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.descent-step.on .descent-dot {
+  background: var(--rust);
+  box-shadow: 0 0 9px var(--rust);
+}
+
+@media (max-width: 760px) {
+  .orbit-panel { top: auto; right: 12px; left: 12px; bottom: 12px; width: auto; max-height: 56vh; }
+  .orbit-head { left: 16px; top: 16px; }
+  .orbit-hint { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trait-fill, .descent-step, .descent-dot { transition: none; }
+}

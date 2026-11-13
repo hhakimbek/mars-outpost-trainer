@@ -16,6 +16,8 @@ export function Hud() {
   const controlled = useGame((s) => s.controlled)
   const setControlled = useGame((s) => s.setControlled)
   const setPhase = useGame((s) => s.setPhase)
+  const toggleView = useGame((s) => s.toggleView)
+  const firstPerson = useGame((s) => s.firstPerson)
   const endSol = useGame((s) => s.endSol)
   const assignments = useGame((s) => s.assignments)
   const outstanding = useGame((s) => s.fieldWorkOutstanding())
@@ -40,6 +42,7 @@ export function Hud() {
         setControlled((controlled + 1) % state.crew.length)
       }
       if (e.code === 'KeyP') setPhase('planning')
+      if (e.code === 'KeyV') toggleView()
       if (e.code === 'Escape' && document.pointerLockElement) document.exitPointerLock()
       if (e.code === 'KeyH' && focused?.id === 'greenhouse') {
         plantCrop()
@@ -47,7 +50,7 @@ export function Hud() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [phase, controlled, state.crew.length, setControlled, setPhase, focused, plantCrop])
+  }, [phase, controlled, state.crew.length, setControlled, setPhase, toggleView, focused, plantCrop])
 
   if (phase !== 'fieldOps') return null
 
@@ -148,6 +151,9 @@ export function Hud() {
           </button>
           <button className="btn ghost" onClick={() => setControlled((controlled + 1) % state.crew.length)}>
             <span className="prompt-key">TAB</span> Switch crew
+          </button>
+          <button className="btn ghost" onClick={toggleView}>
+            <span className="prompt-key">V</span> {firstPerson ? 'Third person' : 'First person'}
           </button>
         </div>
 

@@ -1,5 +1,5 @@
 export type SolPhase =
-  | 'menu' | 'briefing' | 'planning' | 'fieldOps'
+  | 'menu' | 'orbit' | 'descent' | 'briefing' | 'planning' | 'fieldOps'
   | 'resolution' | 'debrief' | 'results' | 'science' | 'howto'
 
 export type Subsystem =
@@ -172,6 +172,8 @@ export interface MissionState {
   totalSols: number
   outcome: Outcome
   seed: number
+  /** Which landing site this mission is being flown from. See data/marsFeatures. */
+  siteId: string
   rngCursor: number
 
   stocks: Stocks

@@ -686,6 +686,7 @@ export function HowTo() {
             <span className="k">Space</span><span>Jump — at 0.38 g you go noticeably higher</span>
             <span className="k">E</span><span>Hold to carry out scheduled work at a structure</span>
             <span className="k">H</span><span>Plant a crop, at the greenhouse (a ripe crop is harvested for you)</span>
+            <span className="k">V</span><span>Switch between first-person and over-the-shoulder view</span>
             <span className="k">Tab</span><span>Switch which astronaut you control</span>
             <span className="k">P</span><span>Open the planning screen</span>
             <span className="k">Esc</span><span>Release the mouse</span>
@@ -717,15 +718,17 @@ export function HowTo() {
 // ===========================================================================
 
 export function Menu() {
-  const startCampaign = useGame((s) => s.startCampaign)
+  const openSiteSelect = useGame((s) => s.openSiteSelect)
   const setPhase = useGame((s) => s.setPhase)
   const load = useGame((s) => s.load)
   const hasSave = useGame((s) => s.hasSave())
   const [seedText, setSeedText] = useState('')
 
+  // Starting a mission now goes to orbit first: the landing site is the first
+  // real decision, and it is made before the outpost exists.
   const start = () => {
     const parsed = parseInt(seedText, 10)
-    startCampaign(Number.isFinite(parsed) && seedText.trim() !== '' ? parsed : undefined)
+    openSiteSelect(Number.isFinite(parsed) && seedText.trim() !== '' ? parsed : undefined)
   }
 
   return (
@@ -760,7 +763,11 @@ export function Menu() {
 
         <div className="btn-row mt-l">
           <button className="btn primary lg" onClick={start}>▶ Start mission</button>
-          {hasSave && <button className="btn lg" onClick={() => { if (!load()) startCampaign() }}>Continue</button>}
+          {hasSave && (
+            <button className="btn lg" onClick={() => { if (!load()) openSiteSelect() }}>
+              Continue
+            </button>
+          )}
           <button className="btn ghost" onClick={() => setPhase('howto')}>How to play</button>
           <button className="btn ghost" onClick={() => setPhase('science')}>Mission science</button>
         </div>

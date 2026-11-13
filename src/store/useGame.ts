@@ -6,6 +6,7 @@ import {
 } from '../sim/simulation'
 import { computeScore } from '../sim/scoring'
 import { eventForSol } from '../data/events'
+import { DEFAULT_SITE_ID } from '../data/marsFeatures'
 import { cloneState } from '../sim/clone'
 import type {
   Assignment, MissionEvent, MissionState, Mode, PowerPlan, Projection,
@@ -19,7 +20,7 @@ const SAVE_KEY = 'mot.save.v1'
  * rejected rather than half-loaded; `load` additionally heals any field that
  * is missing or non-finite, so a partial save can never poison the model.
  */
-const SAVE_VERSION = 2
+const SAVE_VERSION = 3
 
 interface Toast { id: number; text: string; warning: boolean }
 
@@ -38,9 +39,33 @@ interface GameStore {
   evaSecondsLeft: number
   reduceMotion: boolean
 
+  /**
+   * First-person when true, over-the-shoulder when false.
+   *
+   * First person is the better view for judging a hull panel or lining up a
+   * drill; third person is the better view for crossing the site without
+   * walking off a slope. Both are needed, so the player gets both.
+   */
+  firstPerson: boolean
+
+  /** The site highlighted in orbit. Becomes the mission's site on touchdown. */
+  selectedSiteId: string
+  /**
+   * The seed the player typed on the menu, held while they choose a site.
+   *
+   * It cannot go straight into a mission: the mission does not exist until a
+   * site is picked, and leaving the old one running underneath the globe would
+   * let the player abandon a half-played sol by accident.
+   */
+  pendingSeed: number | null
+
   // navigation
   setPhase: (p: SolPhase) => void
-  startCampaign: (seed?: number) => void
+  openSiteSelect: (seed?: number) => void
+  selectSite: (id: string) => void
+  commitLanding: () => void
+  landingComplete: () => void
+  startCampaign: (seed?: number, siteId?: string) => void
   restartSol: () => void
   confirmPlan: () => void
   endSol: () => void
@@ -58,6 +83,7 @@ interface GameStore {
   harvestCrop: () => boolean
 
   // field ops
+  toggleView: () => void
   setControlled: (i: number) => void
   setZone: (crewIndex: number, zone: Zone) => void
   tickFieldOps: (dt: number) => void
@@ -95,13 +121,38 @@ export const useGame = create<GameStore>((set, get) => ({
   toasts: [],
   evaSecondsLeft: C.EVA_SECONDS,
   reduceMotion: false,
+  firstPerson: false,
+  selectedSiteId: DEFAULT_SITE_ID,
+  pendingSeed: null,
 
   // ------------------------------------------------------------ navigation
 
   setPhase: (p) => set({ phase: p }),
 
-  startCampaign: (seed = Math.floor(Date.now() / 1000) % 1000000) => {
-    const state = createInitialState(seed)
+  /** Menu -> orbit. The mission is not built yet; only the seed is held. */
+  openSiteSelect: (seed) => set({
+    pendingSeed: seed ?? null,
+    selectedSiteId: get().selectedSiteId || DEFAULT_SITE_ID,
+    phase: 'orbit',
+  }),
+
+  selectSite: (id) => set({ selectedSiteId: id }),
+
+  /** Orbit -> descent. The globe plays the approach; nothing is committed yet. */
+  commitLanding: () => set({ phase: 'descent' }),
+
+  /**
+   * Touchdown. Only now is the mission built, so a player who backs out of the
+   * descent has not disturbed anything.
+   */
+  landingComplete: () => {
+    const { pendingSeed, selectedSiteId } = get()
+    get().startCampaign(pendingSeed ?? undefined, selectedSiteId)
+  },
+
+  startCampaign: (seed = Math.floor(Date.now() / 1000) % 1000000, siteId) => {
+    const site = siteId ?? get().selectedSiteId ?? DEFAULT_SITE_ID
+    const state = createInitialState(seed, C.TOTAL_SOLS, site)
     set({
       state,
       plan: createDefaultPlan(),
@@ -111,6 +162,7 @@ export const useGame = create<GameStore>((set, get) => ({
       activeEvent: eventForSol(1) ?? null,
       eventResolved: false,
       controlled: 0,
+      selectedSiteId: site,
       phase: 'briefing',
       evaSecondsLeft: C.EVA_SECONDS,
     })
@@ -287,6 +339,12 @@ export const useGame = create<GameStore>((set, get) => ({
 
   // ------------------------------------------------------------- field ops
 
+  toggleView: () => {
+    const next = !get().firstPerson
+    set({ firstPerson: next })
+    get().pushToast(next ? 'First-person view.' : 'Third-person view.')
+  },
+
   setControlled: (i) => set({ controlled: i }),
 
   setZone: (crewIndex, zone) => {
@@ -374,6 +432,7 @@ export const useGame = create<GameStore>((set, get) => ({
 
       set({
         state: healed,
+        selectedSiteId: healed.siteId ?? DEFAULT_SITE_ID,
         plan: data.plan ?? createDefaultPlan(),
         assignments: data.assignments ?? [],
         checkpoint: cloneState(healed),
