@@ -3,6 +3,7 @@ import { canTurnOff, settleAllocation, subsystemCost } from '../sim/simulation'
 import { MODE_NAMES } from '../sim/types'
 import type { Mode, Subsystem, Task } from '../sim/types'
 import { useGame } from '../store/useGame'
+import { ObjectivePanel, ResearchPanel } from './Research'
 import { GaugeRow } from './Gauges'
 import { RackPanel } from './RackPanel'
 
@@ -19,7 +20,7 @@ const SUB_INFO: Record<Subsystem, { name: string; fn: string }> = {
 const TASKS: Task[] = [
   'cleanArray', 'repair', 'tendGreenhouse', 'mixNutrients', 'science',
   'iceRun', 'regolithShield', 'inspection', 'extraRest', 'plantCrop',
-  'startReactor',
+  'startReactor', 'build',
 ]
 
 const TASK_LABEL: Record<Task, string> = {
@@ -35,6 +36,7 @@ const TASK_LABEL: Record<Task, string> = {
   inspection: 'Maintenance inspection',
   extraRest: 'Extra rest',
   startReactor: 'Start fission unit',
+  build: 'Build (sinter regolith)',
 }
 
 export function Planning() {
@@ -319,6 +321,11 @@ export function Planning() {
               </span>
             </div>
           )}
+        </div>
+
+        <div className="planning-cols">
+          <ResearchPanel />
+          <ObjectivePanel />
         </div>
 
         <div className="row spread">

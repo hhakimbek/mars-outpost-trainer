@@ -6,6 +6,8 @@ import {
   rackForecast, type RackInputs,
 } from './greenhouse'
 import { chargeRover } from './expedition'
+import { build as buildStructure, capBattery, capWater, techMods } from './research'
+import { settleObjectives } from '../data/objectives'
 import { mulberry32 } from './rng'
 import { cloneState } from './clone'
 import { MODE_NAMES } from './types'
@@ -28,12 +30,21 @@ const clamp = (v: number, min: number, max: number): number => {
   return Math.min(Math.max(v, min), max)
 }
 
-export function clampStocks(s: Stocks): Stocks {
+/**
+ * Keeps every stock inside the tanks that actually exist.
+ *
+ * `caps` carries the extra capacity the crew has built. It is optional so
+ * that the many callers that only ever clamp a fresh plan keep working, and
+ * leaving it out under-promises rather than over-promises.
+ */
+export function clampStocks(
+  s: Stocks, caps: { water?: number; battery?: number } = {},
+): Stocks {
   return {
     o2: clamp(s.o2, 0, C.CAP_O2),
-    water: clamp(s.water, 0, C.CAP_WATER),
+    water: clamp(s.water, 0, caps.water ?? C.CAP_WATER),
     food: clamp(s.food, 0, C.CAP_FOOD),
-    battery: clamp(s.battery, 0, C.CAP_BATTERY),
+    battery: clamp(s.battery, 0, caps.battery ?? C.CAP_BATTERY),
     cleanliness: clamp(s.cleanliness, 0, 1),
     science: clamp(s.science, 0, 9999),
   }
@@ -120,6 +131,10 @@ export function createInitialState(
     samplesTaken: [],
     samplesHeld: [],
     samplesAnalysed: 0,
+    researched: [],
+    built: [],
+    pendingBuild: null,
+    objectivesMet: [],
     telemetry: true,
     faultsFixed: 0,
     brownoutSols: 0,
@@ -230,10 +245,13 @@ export const canTurnOff = (s: Subsystem): boolean =>
 
 /** What the solar array alone makes this sol. */
 export function computeSolar(
-  env: Environment, cleanliness: number, arrayFault = false,
+  env: Environment, cleanliness: number, arrayFault = false, extraKwh = 0,
 ): number {
   const fault = arrayFault ? C.ARRAY_FAULT_PENALTY : 1
-  return C.ARRAY_CLEAR_KWH * Math.max(env.solarFactor, 0) * clamp(cleanliness, 0, 1) * fault
+  // An extension is more panel, so it is subject to exactly the same dust,
+  // the same storm and the same fault as the rest of the farm.
+  return (C.ARRAY_CLEAR_KWH + extraKwh)
+    * Math.max(env.solarFactor, 0) * clamp(cleanliness, 0, 1) * fault
 }
 
 /**
@@ -248,9 +266,9 @@ export const computeReactor = (reactor: ReactorState): number =>
 
 export function computeGeneration(
   env: Environment, cleanliness: number, arrayFault = false,
-  reactor: ReactorState = 'stowed',
+  reactor: ReactorState = 'stowed', extraKwh = 0,
 ): number {
-  return computeSolar(env, cleanliness, arrayFault) + computeReactor(reactor)
+  return computeSolar(env, cleanliness, arrayFault, extraKwh) + computeReactor(reactor)
 }
 
 /**
@@ -263,6 +281,10 @@ export interface PowerMods {
   thermalFault?: boolean
   /** Defaults to stowed, so a caller that forgets it under-promises. */
   reactor?: ReactorState
+  /** Extra clear-sol output from built array extensions, kWh. */
+  solarBonus?: number
+  /** Battery capacity including built banks, kWh. */
+  batteryCap?: number
 }
 
 /** What a subsystem really draws this sol, faults included. */
@@ -282,7 +304,7 @@ export function effectiveCost(sub: Subsystem, m: Mode, mods: PowerMods = {}): nu
 export function settleAllocation(
   plan: PowerPlan, stocks: Stocks, env: Environment, mods: PowerMods = {},
 ): PowerSettlement {
-  const solar = computeSolar(env, stocks.cleanliness, mods.arrayFault)
+  const solar = computeSolar(env, stocks.cleanliness, mods.arrayFault, mods.solarBonus ?? 0)
   const reactor = computeReactor(mods.reactor ?? 'stowed')
   const generation = solar + reactor
   const batteryDraw = stocks.battery * C.BATTERY_MAX_DISCHARGE * clamp(plan.batteryAuth, 0, 1)
@@ -319,7 +341,7 @@ export function settleAllocation(
 
   const delivered = Math.min(requested, available)
   const surplus = Math.max(generation - delivered, 0)
-  const headroom = Math.max(C.CAP_BATTERY - stocks.battery, 0)
+  const headroom = Math.max((mods.batteryCap ?? C.CAP_BATTERY) - stocks.battery, 0)
 
   return {
     generation, solar, reactor, batteryDraw, available,
@@ -526,7 +548,7 @@ export function applyChoiceEffects(s: MissionState, e: ChoiceEffects): string[] 
     }
   }
 
-  s.stocks = clampStocks(s.stocks)
+  s.stocks = clampStocks(s.stocks, { water: capWater(s), battery: capBattery(s) })
 
   // Report what the player will actually see change.
   const moved: string[] = []
@@ -541,7 +563,9 @@ export function applyChoiceEffects(s: MissionState, e: ChoiceEffects): string[] 
 
 // -------------------------------------------------------------- radiation
 
-export function doseRate(zone: Zone, shield: boolean, spe: boolean): number {
+export function doseRate(
+  zone: Zone, shield: boolean, spe: boolean, mult = 1,
+): number {
   let r =
     zone === 'shelter' ? C.DOSE_SHELTER :
     zone === 'habitat' ? C.DOSE_HABITAT :
@@ -554,7 +578,10 @@ export function doseRate(zone: Zone, shield: boolean, spe: boolean): number {
   // A shelter works against a particle event; open ground does not.
   if (spe) r *= zone === 'shelter' ? 2 : C.SPE_MULTIPLIER
 
-  return r
+  // The Storm Shelter Protocol. Knowing the real flux is what lets the crew
+  // put the mass in the right place, so this applies everywhere rather than
+  // only indoors — see data/research.ts.
+  return r * mult
 }
 
 export const solsRemaining = (stock: number, net: number): number =>
@@ -565,6 +592,7 @@ export const solsRemaining = (stock: number, net: number): number =>
 // ------------------------------------------------------------------- crew
 
 function updateCrew(s: MissionState, assignments: Assignment[], solLog: LogEntry[]): void {
+  const mods = techMods(s)
   const spe = s.env.spe
 
   s.crew.forEach((m, index) => {
@@ -577,13 +605,13 @@ function updateCrew(s: MissionState, assignments: Assignment[], solLog: LogEntry
       const hours = taskHours(a.task)
       onTask += hours
       m.assignedHours += hours
-      dose += hours * doseRate(taskZone(a.task), s.shieldInstalled, spe)
+      dose += hours * doseRate(taskZone(a.task), s.shieldInstalled, spe, mods.doseRate)
     }
 
     // The rest of the sol is spent inside. During a particle event the crew
     // shelter — which is why reaching the shelter in time matters.
     const indoors = Math.max(C.SOL_HOURS - onTask, 0)
-    dose += indoors * doseRate(spe ? 'shelter' : 'habitat', s.shieldInstalled, spe)
+    dose += indoors * doseRate(spe ? 'shelter' : 'habitat', s.shieldInstalled, spe, mods.doseRate)
     m.dose += dose
 
     if (dose > 1) {
@@ -676,7 +704,11 @@ export function resolveSol(
       "Yesterday's inspection caught the wear early — no new faults today.")
   }
 
-  const mods = { arrayFault: s.arrayFault, thermalFault: s.thermalFault, reactor: s.reactor }
+  const tm = techMods(s)
+  const mods = {
+    arrayFault: s.arrayFault, thermalFault: s.thermalFault, reactor: s.reactor,
+    solarBonus: tm.solarBonus, batteryCap: C.CAP_BATTERY + tm.batteryBonus,
+  }
 
   // 4-5. power
   const power = settleAllocation(plan, s.stocks, s.env, mods)
@@ -716,7 +748,7 @@ export function resolveSol(
 
   // 6. production — oxygen from atmospheric CO2
   const o2Kwh = effectiveCost('oxygenGenerator', mode('oxygenGenerator'), mods)
-  const o2Made = o2Kwh / C.O2_KWH_PER_KG
+  const o2Made = (o2Kwh / C.O2_KWH_PER_KG) * tm.o2Yield
   s.stocks.o2 += o2Made
   deltas.o2 += o2Made
   log(solLog, s.sol, 'Oxygen',
@@ -726,6 +758,9 @@ export function resolveSol(
 
   const rMode = mode('waterRecycler')
   let recovery = rMode === 3 ? C.RECYCLER_HIGH : rMode === 2 ? C.RECYCLER_NOMINAL : rMode === 1 ? C.RECYCLER_LOW : 0
+  // The closed Sabatier loop lifts every mode, which is what the real
+  // hardware does: it is a different chemistry, not a bigger pump.
+  if (recovery > 0) recovery = Math.min(recovery + tm.recyclerBonus, 0.99)
   if (s.recyclerClogged) recovery *= 0.5
 
   // 7. consumption
@@ -947,6 +982,22 @@ export function resolveSol(
           -C.REACTOR_START_KWH)
         break
       }
+      case 'build': {
+        if (!s.pendingBuild) {
+          log(solLog, s.sol, 'Construction',
+            'A build shift was scheduled with nothing queued to build.', 0, true)
+          break
+        }
+        if (!a.fieldConfirmed) {
+          log(solLog, s.sol, 'Construction',
+            'The build was planned but nobody went out and did it.', 0, true)
+          break
+        }
+        const r = buildStructure(s, s.pendingBuild as never)
+        log(solLog, s.sol, 'Construction', r.message, 0, !r.ok)
+        if (r.ok) s.pendingBuild = null
+        break
+      }
       case 'extraRest':
         // Rest is not idleness: it buys back the efficiency that fatigue costs.
         m.fatigue = clamp(m.fatigue - 30, 0, 100)
@@ -964,6 +1015,7 @@ export function resolveSol(
     tendedBeds,
     nutrientsAdded,
     sownThisSol,
+    techGrowth: tm.cropGrowth,
   }
   advanceRack(s, rackInputs, solLog, deltas)
 
@@ -971,14 +1023,17 @@ export function resolveSol(
   if (s.stocks.o2 <= 0 && before.o2 > 0) s.depletedCount++
   if (s.stocks.water <= 0 && before.water > 0) s.depletedCount++
   if (s.stocks.food <= 0 && before.food > 0) s.depletedCount++
-  s.stocks = clampStocks(s.stocks)
+  s.stocks = clampStocks(s.stocks, {
+    water: C.CAP_WATER + tm.waterBonus, battery: C.CAP_BATTERY + tm.batteryBonus,
+  })
 
   // 9-10. radiation, health, fatigue
   updateCrew(s, assignments, solLog)
 
   // 11. battery
-  const stored = Math.min(power.surplus, Math.max(C.CAP_BATTERY - s.stocks.battery, 0))
-  s.stocks.battery = clamp(s.stocks.battery - power.batteryDraw + stored, 0, C.CAP_BATTERY)
+  const batteryCap = C.CAP_BATTERY + tm.batteryBonus
+  const stored = Math.min(power.surplus, Math.max(batteryCap - s.stocks.battery, 0))
+  s.stocks.battery = clamp(s.stocks.battery - power.batteryDraw + stored, 0, batteryCap)
   s.roverCharged = mode('roverCharge') !== 0
   // The rover carries exactly the energy the plan actually delivered to it —
   // not what the plan asked for. A browned-out charge is a short expedition,
@@ -993,7 +1048,7 @@ export function resolveSol(
   }
 
   // 12. dust and wear
-  const dustLoss = C.DUST_PER_SOL + (s.env.dustStorm ? 0.22 : 0)
+  const dustLoss = (C.DUST_PER_SOL + (s.env.dustStorm ? 0.22 : 0)) * tm.dustLoss
   if (!assignments.some((a) => a.task === 'cleanArray')) {
     s.stocks.cleanliness = clamp(s.stocks.cleanliness - dustLoss, 0, 1)
   }
@@ -1008,7 +1063,9 @@ export function resolveSol(
       `Equipment wear is at ${Math.round(s.wear * 100)}%. Something will fail soon ` +
       'unless the crew inspects the outpost.', 0, true)
   }
-  s.stocks = clampStocks(s.stocks)
+  s.stocks = clampStocks(s.stocks, {
+    water: C.CAP_WATER + tm.waterBonus, battery: C.CAP_BATTERY + tm.batteryBonus,
+  })
 
   // A reactor does not come up in an afternoon. The shift that starts it is
   // worked today; the power arrives tomorrow, which means starting it during
@@ -1018,6 +1075,13 @@ export function resolveSol(
     log(solLog, s.sol, 'Power',
       `The fission unit reached full output. ${C.REACTOR_KWH} kWh a sol from here on, ` +
       'independent of the weather.', C.REACTOR_KWH)
+  }
+
+  // 12b. mission objectives. Checked after everything else has settled, so
+  // "end a sol with everyone fit" means the sol as it actually finished.
+  for (const o of settleObjectives(s)) {
+    log(solLog, s.sol, 'Objective',
+      `${o.name} — ${o.brief} Complete. +${o.reward} science.`, o.reward)
   }
 
   // 13-14. advance and judge
@@ -1048,7 +1112,11 @@ export function resolveSol(
 export function computeProjection(
   s: MissionState, plan: PowerPlan, assignments: Assignment[],
 ): Projection {
-  const mods = { arrayFault: s.arrayFault, thermalFault: s.thermalFault, reactor: s.reactor }
+  const tm = techMods(s)
+  const mods = {
+    arrayFault: s.arrayFault, thermalFault: s.thermalFault, reactor: s.reactor,
+    solarBonus: tm.solarBonus, batteryCap: C.CAP_BATTERY + tm.batteryBonus,
+  }
   const power = settleAllocation(plan, s.stocks, s.env, mods)
   const powerBalance = power.available - power.requested
   const overAllocated = powerBalance < -1e-6
@@ -1073,6 +1141,9 @@ export function computeProjection(
 
   const rMode = plan.modes.waterRecycler
   let recovery = rMode === 3 ? C.RECYCLER_HIGH : rMode === 2 ? C.RECYCLER_NOMINAL : rMode === 1 ? C.RECYCLER_LOW : 0
+  // The closed Sabatier loop lifts every mode, which is what the real
+  // hardware does: it is a different chemistry, not a bigger pump.
+  if (recovery > 0) recovery = Math.min(recovery + tm.recyclerBonus, 0.99)
   if (s.recyclerClogged) recovery *= 0.5
   const crewWater = C.WATER_PER_CREW * s.crew.length
   let netWater = crewWater * recovery - crewWater

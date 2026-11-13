@@ -159,6 +159,14 @@ export interface RackInputs {
   nutrientsAdded: number
   /** Beds sown this sol — seeds cannot starve before they germinate. */
   sownThisSol: number[]
+  /**
+   * Multiplier on growth from researched technology, default 1.
+   *
+   * Perchlorate remediation is the one that moves it: cleaner water and a
+   * cleaner nutrient feed, which is a precondition for using any local
+   * material around food at all.
+   */
+  techGrowth?: number
 }
 
 /**
@@ -312,7 +320,7 @@ export function advanceRack(
     const tendFactor = tended ? 1.25 : 1
 
     const rate = baseRate * tempFactor * co2Factor * nutrientFactor *
-      humidityFactor * conditionFactor * tendFactor
+      humidityFactor * conditionFactor * tendFactor * (inputs.techGrowth ?? 1)
 
     bed.progress = clamp(bed.progress + rate / crop.growSols, 0, 1)
     if (tended) bed.solsTended++

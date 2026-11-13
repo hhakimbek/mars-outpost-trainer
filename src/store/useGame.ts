@@ -14,6 +14,8 @@ import { HABITAT_OPS, opBlockedReason, runHabitatOp, type HabitatOpId } from '..
 import {
   analyseSamples, collectSample, drill, spendDriving,
 } from '../sim/expedition'
+import { research } from '../sim/research'
+import type { BuildId, TechId } from '../data/research'
 import type {
   Assignment, MissionEvent, MissionState, Mode, PowerPlan, Projection,
   ScoreBreakdown, SolPhase, SolResult, Subsystem, Task, Zone,
@@ -26,7 +28,7 @@ const SAVE_KEY = 'mot.save.v1'
  * rejected rather than half-loaded; `load` additionally heals any field that
  * is missing or non-finite, so a partial save can never poison the model.
  */
-const SAVE_VERSION = 5
+const SAVE_VERSION = 6
 
 interface Toast { id: number; text: string; warning: boolean }
 
@@ -123,6 +125,12 @@ interface GameStore {
   takeSample: (id: string) => boolean
   /** Work the sample rack at the laboratory bench. */
   analyseRack: () => boolean
+
+  // ----------------------------------------------- research and construction
+  /** Spend science on a technology. Permanent. */
+  researchTech: (id: TechId) => boolean
+  /** Choose what the next Build shift will put up, or clear the queue. */
+  queueBuild: (id: BuildId | null) => void
   toggleView: () => void
   setControlled: (i: number) => void
   setZone: (crewIndex: number, zone: Zone) => void
@@ -507,6 +515,24 @@ export const useGame = create<GameStore>((set, get) => ({
     set({ state: s })
     get().pushToast(r.message, r.warning)
     return r.ok
+  },
+
+  researchTech: (id) => {
+    const s = cloneState(get().state)
+    const r = research(s, id)
+    set({ state: s })
+    get().pushToast(r.message, r.warning)
+    return r.ok
+  },
+
+  queueBuild: (id) => {
+    const s = cloneState(get().state)
+    s.pendingBuild = id
+    set({ state: s })
+    if (id) {
+      get().pushToast(
+        'Queued. It goes up when a Build shift is scheduled and carried out.')
+    }
   },
 
   analyseRack: () => {

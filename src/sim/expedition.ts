@@ -1,4 +1,5 @@
 import { C } from './constants'
+import { capWater, techMods } from './research'
 import { ICE_THRESHOLD, SAMPLE_INFO, iceAt, sampleSites } from '../world/iceField'
 import type { SampleKind } from '../world/iceField'
 import type { MissionState } from './types'
@@ -39,6 +40,10 @@ export interface DrillResult {
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
+/** What one hole costs right now, autonomous drilling included. */
+export const drillCost = (s: MissionState): number =>
+  C.DRILL_KWH * techMods(s).drillEnergy
+
 /** Litres already taken out of a deposit this mission. */
 export const drilledFrom = (s: MissionState, id: string): number => s.drilled[id] ?? 0
 
@@ -68,12 +73,13 @@ export function patchRemaining(s: MissionState, x: number, z: number): number {
  * costs you the same kWh as a good one.
  */
 export function drill(s: MissionState, x: number, z: number): DrillResult {
-  if (s.roverKwh < C.DRILL_KWH) {
+  const cost = drillCost(s)
+  if (s.roverKwh < cost) {
     return { ok: false, litres: 0, warning: true,
-      message: `The drill needs ${C.DRILL_KWH} kWh and the rover has ${s.roverKwh.toFixed(1)}.` }
+      message: `The drill needs ${cost.toFixed(1)} kWh and the rover has ${s.roverKwh.toFixed(1)}.` }
   }
 
-  s.roverKwh = Math.max(0, s.roverKwh - C.DRILL_KWH)
+  s.roverKwh = Math.max(0, s.roverKwh - cost)
   const grade = iceAt(x, z, s.seed, s.siteId)
 
   if (grade < ICE_THRESHOLD) {
@@ -90,7 +96,7 @@ export function drill(s: MissionState, x: number, z: number): DrillResult {
 
   const litres = Math.min(C.DRILL_LITRES * grade, left)
   s.drilled[patchId(x, z)] = drilledFrom(s, patchId(x, z)) + litres
-  s.stocks.water = Math.min(s.stocks.water + litres, C.CAP_WATER)
+  s.stocks.water = Math.min(s.stocks.water + litres, capWater(s))
   s.waterDrilled += litres
 
   return { ok: true, litres, warning: false,

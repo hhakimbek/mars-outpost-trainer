@@ -15,7 +15,7 @@ export const MODE_NAMES = ['OFF', 'LOW', 'NOMINAL', 'HIGH'] as const
 export type Task =
   | 'none' | 'cleanArray' | 'repair' | 'tendGreenhouse' | 'science'
   | 'iceRun' | 'regolithShield' | 'inspection' | 'extraRest' | 'plantCrop'
-  | 'mixNutrients' | 'startReactor'
+  | 'mixNutrients' | 'startReactor' | 'build'
 
 /** The four things that can break. Each one is repairable in the field. */
 export type FaultId = 'o2Leak' | 'recyclerClogged' | 'arrayFault' | 'thermalFault'
@@ -285,6 +285,19 @@ export interface MissionState {
   samplesHeld: SampleKind[]
   /** How many have been worked at the laboratory bench. */
   samplesAnalysed: number
+  /** Technology ids unlocked. Permanent. See data/research.ts. */
+  researched: string[]
+  /** Structures sintered and assembled. One entry per unit built. */
+  built: string[]
+  /**
+   * What a scheduled `build` shift will put up.
+   *
+   * Queued from the research panel and consumed by the shift, so putting up a
+   * structure takes both a decision and six crew-hours of somebody's sol.
+   */
+  pendingBuild: string | null
+  /** Mission objectives already met. Each pays once. See data/objectives.ts. */
+  objectivesMet: string[]
 
   /** Cabin CO2, normalised 0..1. Driven by the life-support mode. */
   co2: number

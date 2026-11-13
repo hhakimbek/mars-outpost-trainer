@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect } from 'react'
 import { C } from '../sim/constants'
 import { structureById, STRUCTURES } from '../data/structures'
 import { eventForSol } from '../data/events'
+import { OBJECTIVES } from '../data/objectives'
 import { useGame } from '../store/useGame'
 import { useField } from '../world/fieldState'
 import { bedStage, greenhouseSummary } from '../sim/greenhouse'
@@ -109,6 +110,25 @@ export function Hud() {
             <div className="label">Today</div>
             <ul>
               <li><span>{event ? '◆' : '·'}</span><span>{event?.objective ?? 'Keep the outpost running.'}</span></li>
+              {/* The nearest mission objective, so the long game is visible
+                  from the field rather than only on the planning screen. */}
+              {(() => {
+                const open = OBJECTIVES
+                  .filter((o) => !state.objectivesMet.includes(o.id))
+                  .sort((a, b) => b.progress(state) - a.progress(state))[0]
+                if (!open) {
+                  return <li><span style={{ color: 'var(--ok)' }}>✓</span>
+                    <span style={{ color: 'var(--ok)' }}>Every mission objective met.</span></li>
+                }
+                return (
+                  <li title={open.why}>
+                    <span>◇</span>
+                    <span>
+                      {open.name} — {Math.round(open.progress(state) * 100)}%
+                    </span>
+                  </li>
+                )
+              })()}
               {assignments.map((a, i) => (
                 <li key={i}>
                   <span>{a.fieldConfirmed ? '✓' : '○'}</span>

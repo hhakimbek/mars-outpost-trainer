@@ -393,6 +393,7 @@ export const TASK_HOURS = {
   inspection: 2,
   extraRest: 2,
   startReactor: 5,
+  build: 6,
 } as const
 
 export const SUBSYSTEM_COST = {
