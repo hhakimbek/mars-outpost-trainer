@@ -239,6 +239,40 @@ export const C = {
   // whole design. Every figure here is GAME: the trades are real, the numbers
   // are tuned so that none of them is free and none is a dominant move.
 
+  // ------------------------------------------------- fission surface power
+  //
+  // The backup reactor is modelled on NASA's Kilopower project and its KRUSTY
+  // demonstrator, which ran a full-power test in 2018: a compact uranium-235
+  // fission unit with Stirling convertors, designed in 1–10 kWe sizes, and
+  // NASA's baseline for a crewed outpost was four 10 kWe units.
+  //
+  // SCALE, STATED PLAINLY: this outpost's entire budget is about 58 kWh a
+  // sol, which is roughly a seventeenth of what a real four-person Mars base
+  // would draw. Quoting a real 10 kWe unit here would hand the player 246 kWh
+  // a sol and end the power game on contact. REACTOR_KWH is therefore scaled
+  // to this simulation's budget, and it is the RATIO that is faithful: one
+  // unit covers about a third of a clean array's best sol — and it covers it
+  // at night, and through a storm, which is the entire point of flying one.
+
+  /** Flat output once online, kWh per sol. REAL~ (ratio), see the note above. */
+  REACTOR_KWH: 19,
+  /**
+   * Battery spent on the startup sequence, kWh. REAL~
+   *
+   * Starting a fission unit takes power before it makes any — pumps,
+   * instrumentation, and the convertors themselves. Doing it on the last of
+   * the batteries during a storm is a real way to lose an outpost.
+   */
+  REACTOR_START_KWH: 9,
+  /**
+   * Dose, mSv, taken by the crew member who runs the startup. REAL~
+   *
+   * The unit sits well away from the habitat behind a shadow shield, and the
+   * startup is the one job that has to be done next to it. The figure is
+   * small because the shield works; it is not zero because physics.
+   */
+  REACTOR_START_DOSE: 0.9,
+
   /**
    * Seconds to cycle the airlock, each way. GAME
    *
@@ -290,6 +324,7 @@ export const TASK_HOURS = {
   regolithShield: 6,
   inspection: 2,
   extraRest: 2,
+  startReactor: 5,
 } as const
 
 export const SUBSYSTEM_COST = {

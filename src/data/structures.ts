@@ -82,6 +82,17 @@ export const STRUCTURES: StructureDef[] = [
       'on the Martian surface.',
   },
   {
+    id: 'reactor', name: 'Fission Surface Power', short: 'FSP',
+    pos: [-28, 0, 20], rot: -0.5, radius: 4.0, task: 'startReactor', tint: '#a3e635',
+    fn: 'Backup nuclear power. Flat output day, night and dust storm — once it is started.',
+    learn:
+      'NASA\u2019s Kilopower project built and ran a real one of these: KRUSTY, a compact ' +
+      'uranium-235 fission reactor with Stirling convertors, full-power tested in 2018 in ' +
+      '1\u201310 kWe sizes. The baseline for a crewed outpost was four 10 kWe units. It sits far ' +
+      'from the habitat behind a shadow shield, and it is the only power source on Mars that ' +
+      'does not care whether the sun is out.',
+  },
+  {
     id: 'breach', name: 'Hull Breach', short: 'FIX',
     pos: [4.5, 0, 5.2], radius: 2.4, task: 'repair', tint: '#f2555a',
     fn: 'A damaged hull panel venting oxygen. Hold E to apply sealant.',

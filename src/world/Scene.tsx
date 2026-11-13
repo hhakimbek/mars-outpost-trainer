@@ -292,7 +292,7 @@ function Paths() {
     const patches: { p: [number, number, number]; r: number; rot: number }[] = []
     const prints: { p: [number, number, number]; rot: number }[] = []
     const targets: [number, number][] = [
-      [-16, -9], [15, -10], [10, 12], [-10, 12], [-19, 4], [21, 6],
+      [-16, -9], [15, -10], [10, 12], [-10, 12], [-19, 4], [21, 6], [-28, 20],
     ]
     for (const [tx, tz] of targets) {
       const length = Math.hypot(tx, tz)

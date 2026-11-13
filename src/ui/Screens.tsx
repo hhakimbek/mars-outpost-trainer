@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { C } from '../sim/constants'
 import { BADGE_INFO } from '../sim/scoring'
-import { computeGeneration } from '../sim/simulation'
+import { computeSolar } from '../sim/simulation'
 import { eventForSol } from '../data/events'
 import { STRUCTURES } from '../data/structures'
 import { useGame } from '../store/useGame'
@@ -69,7 +69,7 @@ export function Briefing() {
             <div className="small mt-s stack gap-s">
               <div className="row spread">
                 <span className="body-dim">Solar output</span>
-                <span className="num">{Math.round(computeGeneration(state.env, state.stocks.cleanliness, state.arrayFault))} kWh</span>
+                <span className="num">{Math.round(computeSolar(state.env, state.stocks.cleanliness, state.arrayFault))} kWh</span>
               </div>
               <div className="row spread">
                 <span className="body-dim">Optical depth (tau)</span>
@@ -236,7 +236,12 @@ export function Resolution() {
           <div className="card">
             <div className="label">Energy</div>
             <div className="small mt-s stack gap-s">
-              <div className="row spread"><span className="body-dim">Generated</span><span className="num">{result.power.generation.toFixed(1)} kWh</span></div>
+              <div className="row spread"><span className="body-dim">Solar</span><span className="num">{result.power.solar.toFixed(1)} kWh</span></div>
+              {result.power.reactor > 0 && (
+                <div className="row spread" style={{ color: 'var(--ok)' }}>
+                  <span>Fission unit</span><span className="num">{result.power.reactor.toFixed(1)} kWh</span>
+                </div>
+              )}
               <div className="row spread"><span className="body-dim">Used</span><span className="num">{result.power.delivered.toFixed(1)} kWh</span></div>
               <div className="row spread"><span className="body-dim">Battery drawn</span><span className="num">{result.power.batteryDraw.toFixed(1)} kWh</span></div>
               {result.power.wasted > 0.5 && (

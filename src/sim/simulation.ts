@@ -10,7 +10,7 @@ import { cloneState } from './clone'
 import { MODE_NAMES } from './types'
 import type {
   Assignment, ChoiceEffects, CrewMember, Environment, FaultId, LogEntry, MissionState, Mode,
-  PowerPlan, PowerSettlement, Projection, SolResult, Stocks, Subsystem, Task, Zone,
+  PowerPlan, PowerSettlement, Projection, ReactorState, SolResult, Stocks, Subsystem, Task, Zone,
 } from './types'
 
 const SUBSYSTEMS = Object.keys(SUBSYSTEM_COST) as Subsystem[]
@@ -112,6 +112,7 @@ export function createInitialState(
     wear: 0.05,
     lastInspection: 0,
     habitatOpsUsed: [],
+    reactor: 'stowed',
     telemetry: true,
     faultsFixed: 0,
     brownoutSols: 0,
@@ -220,11 +221,29 @@ export const subsystemCost = (s: Subsystem, m: Mode): number => SUBSYSTEM_COST[s
 export const canTurnOff = (s: Subsystem): boolean =>
   !(CANNOT_TURN_OFF as readonly string[]).includes(s)
 
-export function computeGeneration(
+/** What the solar array alone makes this sol. */
+export function computeSolar(
   env: Environment, cleanliness: number, arrayFault = false,
 ): number {
   const fault = arrayFault ? C.ARRAY_FAULT_PENALTY : 1
   return C.ARRAY_CLEAR_KWH * Math.max(env.solarFactor, 0) * clamp(cleanliness, 0, 1) * fault
+}
+
+/**
+ * What the fission unit makes this sol.
+ *
+ * Flat. That is the whole design of the thing, and it is the reason to spend
+ * five crew-hours and a dose on starting it: this number does not care what
+ * the sky is doing, and on a storm sol it can be most of the outpost's power.
+ */
+export const computeReactor = (reactor: ReactorState): number =>
+  reactor === 'online' ? C.REACTOR_KWH : 0
+
+export function computeGeneration(
+  env: Environment, cleanliness: number, arrayFault = false,
+  reactor: ReactorState = 'stowed',
+): number {
+  return computeSolar(env, cleanliness, arrayFault) + computeReactor(reactor)
 }
 
 /**
@@ -235,6 +254,8 @@ export function computeGeneration(
 export interface PowerMods {
   arrayFault?: boolean
   thermalFault?: boolean
+  /** Defaults to stowed, so a caller that forgets it under-promises. */
+  reactor?: ReactorState
 }
 
 /** What a subsystem really draws this sol, faults included. */
@@ -254,7 +275,9 @@ export function effectiveCost(sub: Subsystem, m: Mode, mods: PowerMods = {}): nu
 export function settleAllocation(
   plan: PowerPlan, stocks: Stocks, env: Environment, mods: PowerMods = {},
 ): PowerSettlement {
-  const generation = computeGeneration(env, stocks.cleanliness, mods.arrayFault)
+  const solar = computeSolar(env, stocks.cleanliness, mods.arrayFault)
+  const reactor = computeReactor(mods.reactor ?? 'stowed')
+  const generation = solar + reactor
   const batteryDraw = stocks.battery * C.BATTERY_MAX_DISCHARGE * clamp(plan.batteryAuth, 0, 1)
   const available = generation + batteryDraw
 
@@ -292,7 +315,7 @@ export function settleAllocation(
   const headroom = Math.max(C.CAP_BATTERY - stocks.battery, 0)
 
   return {
-    generation, batteryDraw, available,
+    generation, solar, reactor, batteryDraw, available,
     requested: originalRequest, delivered, surplus,
     wasted: Math.max(surplus - headroom, 0),
     achieved, brownedOut,
@@ -363,7 +386,8 @@ export const taskHours = (t: Task): number => TASK_HOURS[t]
 
 export function taskZone(t: Task): Zone {
   switch (t) {
-    case 'cleanArray': case 'science': case 'regolithShield': return 'eva'
+    case 'cleanArray': case 'science': case 'regolithShield': case 'startReactor':
+      return 'eva'
     case 'iceRun': return 'rover'
     default: return 'habitat'
   }
@@ -441,6 +465,10 @@ export function applyChoiceEffects(s: MissionState, e: ChoiceEffects): string[] 
   if (e.arrayFault !== undefined) s.arrayFault = e.arrayFault
   if (e.thermalFault !== undefined) s.thermalFault = e.thermalFault
   if (e.shieldInstalled) s.shieldInstalled = true
+  if (e.reactorScram && (s.reactor === 'online' || s.reactor === 'starting')) {
+    s.reactor = 'scrammed'
+    notes.push('The fission unit scrammed. It will have to be restarted by hand.')
+  }
 
   if (e.healthAll) {
     s.crew.forEach((m) => { m.health = clamp(m.health + e.healthAll!, 0, 100) })
@@ -641,7 +669,7 @@ export function resolveSol(
       "Yesterday's inspection caught the wear early — no new faults today.")
   }
 
-  const mods = { arrayFault: s.arrayFault, thermalFault: s.thermalFault }
+  const mods = { arrayFault: s.arrayFault, thermalFault: s.thermalFault, reactor: s.reactor }
 
   // 4-5. power
   const power = settleAllocation(plan, s.stocks, s.env, mods)
@@ -649,11 +677,20 @@ export function resolveSol(
   s.totalUsed += power.delivered
   s.totalWasted += power.wasted
 
+  // Reported split rather than summed. The whole lesson of the fission unit is
+  // that one of these two numbers collapses in a storm and the other does not,
+  // and a single combined figure hides exactly that.
   log(solLog, s.sol, 'Power',
-    `Solar array generated ${Math.round(power.generation)} kWh ` +
+    `Solar array generated ${Math.round(power.solar)} kWh ` +
     `(${Math.round(s.env.solarFactor * s.stocks.cleanliness * 100)}% of nominal` +
     `${s.arrayFault ? ', one string offline' : ''}).`,
-    power.generation)
+    power.solar)
+  if (power.reactor > 0) {
+    log(solLog, s.sol, 'Power',
+      `The fission unit generated ${Math.round(power.reactor)} kWh — the same as every ` +
+      `other sol, and ${Math.round((power.reactor / Math.max(power.generation, 1)) * 100)}% ` +
+      'of the outpost’s energy today.', power.reactor)
+  }
 
   if (power.brownedOut.length > 0) {
     s.brownoutSols++
@@ -876,6 +913,33 @@ export function resolveSol(
           `${m.name} inspected the outpost. Wear is down to ` +
           `${Math.round(s.wear * 100)}% and nothing will fail tomorrow.`)
         break
+      case 'startReactor': {
+        if (s.reactor === 'online' || s.reactor === 'starting') {
+          log(solLog, s.sol, 'Power',
+            'The fission unit is already running — those five crew-hours bought nothing.', 0, true)
+          break
+        }
+        if (!a.fieldConfirmed) {
+          log(solLog, s.sol, 'Power',
+            'The reactor startup was planned but nobody walked out to the unit.', 0, true)
+          break
+        }
+        if (s.stocks.battery < C.REACTOR_START_KWH) {
+          log(solLog, s.sol, 'Power',
+            `The startup sequence needs ${C.REACTOR_START_KWH} kWh and the batteries ` +
+            'could not spare it. The unit is still cold.', 0, true)
+          break
+        }
+        s.stocks.battery -= C.REACTOR_START_KWH
+        deltas.battery -= C.REACTOR_START_KWH
+        s.reactor = 'starting'
+        m.dose += C.REACTOR_START_DOSE
+        log(solLog, s.sol, 'Power',
+          `${m.name} ran the startup sequence on the fission unit. It comes up to full ` +
+          `output tomorrow — ${C.REACTOR_KWH} kWh a sol, every sol, storm or not.`,
+          -C.REACTOR_START_KWH)
+        break
+      }
       case 'extraRest':
         // Rest is not idleness: it buys back the efficiency that fatigue costs.
         m.fatigue = clamp(m.fatigue - 30, 0, 100)
@@ -928,6 +992,16 @@ export function resolveSol(
   }
   s.stocks = clampStocks(s.stocks)
 
+  // A reactor does not come up in an afternoon. The shift that starts it is
+  // worked today; the power arrives tomorrow, which means starting it during
+  // the storm is already too late.
+  if (s.reactor === 'starting') {
+    s.reactor = 'online'
+    log(solLog, s.sol, 'Power',
+      `The fission unit reached full output. ${C.REACTOR_KWH} kWh a sol from here on, ` +
+      'independent of the weather.', C.REACTOR_KWH)
+  }
+
   // 13-14. advance and judge
   s.hoursLost = 0
   // A new sol is a new galley, a new hygiene cycle and a new course of
@@ -956,7 +1030,7 @@ export function resolveSol(
 export function computeProjection(
   s: MissionState, plan: PowerPlan, assignments: Assignment[],
 ): Projection {
-  const mods = { arrayFault: s.arrayFault, thermalFault: s.thermalFault }
+  const mods = { arrayFault: s.arrayFault, thermalFault: s.thermalFault, reactor: s.reactor }
   const power = settleAllocation(plan, s.stocks, s.env, mods)
   const powerBalance = power.available - power.requested
   const overAllocated = powerBalance < -1e-6

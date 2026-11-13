@@ -1,4 +1,4 @@
-import { computeGeneration } from '../sim/simulation'
+import { computeSolar } from '../sim/simulation'
 import type { MissionEvent } from '../sim/types'
 
 /**
@@ -21,7 +21,7 @@ export const EVENTS: MissionEvent[] = [
       'run everything at once. Walk the outpost, then open the planning screen and decide ' +
       'where today’s energy goes.',
     telemetry: {
-      'Solar output (forecast)': (m) => `${Math.round(computeGeneration(m.env, m.stocks.cleanliness, m.arrayFault))} kWh today`,
+      'Solar output (forecast)': (m) => `${Math.round(computeSolar(m.env, m.stocks.cleanliness, m.arrayFault))} kWh today`,
       'Nominal demand (all systems)': '48 kWh with the greenhouse lit',
       'Crew': '3 — all nominal',
       'Earth round-trip delay': '~28 minutes',
@@ -149,7 +149,7 @@ export const EVENTS: MissionEvent[] = [
       'Life support and heating cannot be switched off. Decide what you sacrifice.',
     telemetry: {
       'Solar output today': (m) =>
-        `${Math.round(computeGeneration(m.env, m.stocks.cleanliness, m.arrayFault))} kWh — array ${Math.round(m.stocks.cleanliness * 100)}% clean`,
+        `${Math.round(computeSolar(m.env, m.stocks.cleanliness, m.arrayFault))} kWh — array ${Math.round(m.stocks.cleanliness * 100)}% clean`,
       'Battery available': (m) => `${m.stocks.battery.toFixed(1)} kWh stored`,
       'Mandatory load (LS + thermal, at LOW)': '11 kWh',
       'Optical depth (tau)': '5.8',

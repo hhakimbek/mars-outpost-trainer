@@ -23,7 +23,7 @@ const SAVE_KEY = 'mot.save.v1'
  * rejected rather than half-loaded; `load` additionally heals any field that
  * is missing or non-finite, so a partial save can never poison the model.
  */
-const SAVE_VERSION = 4
+const SAVE_VERSION = 5
 
 interface Toast { id: number; text: string; warning: boolean }
 

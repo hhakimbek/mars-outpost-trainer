@@ -14,7 +14,7 @@ export const MODE_NAMES = ['OFF', 'LOW', 'NOMINAL', 'HIGH'] as const
 export type Task =
   | 'none' | 'cleanArray' | 'repair' | 'tendGreenhouse' | 'science'
   | 'iceRun' | 'regolithShield' | 'inspection' | 'extraRest' | 'plantCrop'
-  | 'mixNutrients'
+  | 'mixNutrients' | 'startReactor'
 
 /** The four things that can break. Each one is repairable in the field. */
 export type FaultId = 'o2Leak' | 'recyclerClogged' | 'arrayFault' | 'thermalFault'
@@ -125,8 +125,26 @@ export interface Assignment {
   crop?: CropId
 }
 
+/**
+ * How the outpost is powered.
+ *
+ * `stowed`   the fission unit is on its pallet, unfuelled from the crew's
+ *            point of view and producing nothing
+ * `starting` set by the startup shift and converted to `online` at the end of
+ *            the same sol's resolution, after that sol's power has already
+ *            been settled. It is therefore never visible between sols: it is
+ *            the mechanism of the one-sol delay, not a state to display
+ * `online`   producing a flat output every sol, day, night and dust storm
+ * `scrammed` shut down by a fault or a decision; it can be restarted
+ */
+export type ReactorState = 'stowed' | 'starting' | 'online' | 'scrammed'
+
 export interface PowerSettlement {
   generation: number
+  /** The solar half of `generation`, kWh. Dust and cleanliness move this. */
+  solar: number
+  /** The fission half of `generation`, kWh. Nothing in the weather moves it. */
+  reactor: number
   batteryDraw: number
   available: number
   requested: number
@@ -222,6 +240,8 @@ export interface ChoiceEffects {
   cropDamage?: number
   /** Change to the nutrient reservoir, -1..1. */
   nutrients?: number
+  /** Trips the fission unit offline. It has to be restarted by hand. */
+  reactorScram?: boolean
 }
 
 export interface MissionState {
@@ -239,6 +259,8 @@ export interface MissionState {
   env: Environment
 
   shieldInstalled: boolean
+  /** The backup fission surface power unit. See constants REACTOR_*. */
+  reactor: ReactorState
   o2Leak: number
   recyclerClogged: boolean
   arrayFault: boolean

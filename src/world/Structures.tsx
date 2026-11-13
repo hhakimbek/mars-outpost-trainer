@@ -7,7 +7,7 @@ import { hullPanels, solarCells, hazardStripe, dustStreak, softGlow } from './te
 import { useGame } from '../store/useGame'
 import { bedStage } from '../sim/greenhouse'
 import { CROPS, type CropId } from '../data/crops'
-import type { CropBed } from '../sim/types'
+import type { CropBed, ReactorState } from '../sim/types'
 
 // ===========================================================================
 //  shared small parts
@@ -899,6 +899,129 @@ function Battery({ charge }: { charge: number }) {
 }
 
 // ===========================================================================
+//  FISSION SURFACE POWER
+// ===========================================================================
+
+/**
+ * A Kilopower-class fission unit, as NASA has actually built and tested.
+ *
+ * The silhouette is the real one and it is unmistakable: a small core at the
+ * bottom, a cone-shaped shadow shield above it, a mast, and the Stirling
+ * convertors feeding four radiator panels that open out like an umbrella.
+ * Nearly all of the hardware you can see on a Kilopower unit exists to throw
+ * heat away, which is why the radiators dwarf the reactor itself.
+ *
+ * The running state is readable from a distance: the radiators warm up, the
+ * convertor glow comes on, and the exclusion markers light.
+ */
+function Reactor({ state: mode }: { state: ReactorState }) {
+  const running = mode === 'online'
+  const starting = mode === 'starting'
+  const glow = useRef<THREE.Group>(null)
+
+  useFrame((st) => {
+    if (!glow.current) return
+    // A slow thermal breathing while it runs; a faster flicker while it is
+    // coming up, because a startup is a sequence and should look like one.
+    const t = st.clock.elapsedTime
+    const k = running ? 1 + Math.sin(t * 0.9) * 0.1 : starting ? 0.4 + Math.abs(Math.sin(t * 3)) * 0.6 : 0
+    glow.current.scale.setScalar(Math.max(k, 0.001))
+    glow.current.visible = k > 0.01
+  })
+
+  const hot = running ? '#e8734a' : '#6b7684'
+
+  return (
+    <group>
+      {/* the regolith berm the unit sits behind */}
+      <mesh receiveShadow position={[0, 0.0, 2.6]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[2.4, 3.6, 24, 1, Math.PI * 0.15, Math.PI * 0.7]} />
+        <meshStandardMaterial color="#9c5a33" roughness={1} />
+      </mesh>
+
+      {/* core unit */}
+      <mesh castShadow receiveShadow position={[0, 0.45, 0]}>
+        <cylinderGeometry args={[0.46, 0.52, 0.9, 16]} />
+        <meshStandardMaterial color="#8d98a6" roughness={0.45} metalness={0.6} />
+      </mesh>
+      {/* shadow shield — the cone that makes it safe to stand on one side */}
+      <mesh castShadow position={[0, 1.15, 0]}>
+        <coneGeometry args={[0.95, 0.7, 16]} />
+        <meshStandardMaterial color="#5f6773" roughness={0.6} metalness={0.4} />
+      </mesh>
+      {/* mast */}
+      <mesh castShadow position={[0, 2.0, 0]}>
+        <cylinderGeometry args={[0.13, 0.15, 1.3, 12]} />
+        <meshStandardMaterial color="#aab3bd" roughness={0.35} metalness={0.75} />
+      </mesh>
+      {/* Stirling convertors */}
+      {[0, 1, 2, 3].map((i) => {
+        const a = (i / 4) * Math.PI * 2 + Math.PI / 4
+        return (
+          <mesh key={i} castShadow
+            position={[Math.cos(a) * 0.3, 2.5, Math.sin(a) * 0.3]}>
+            <cylinderGeometry args={[0.09, 0.09, 0.5, 10]} />
+            <meshStandardMaterial
+              color={hot} roughness={0.4} metalness={0.5}
+              emissive={running ? '#e8734a' : '#000000'} emissiveIntensity={running ? 0.5 : 0} />
+          </mesh>
+        )
+      })}
+      {/* radiator panels, opened out */}
+      {[0, 1, 2, 3].map((i) => {
+        const a = (i / 4) * Math.PI * 2
+        return (
+          <group key={i} rotation={[0, a, 0]}>
+            <mesh castShadow position={[0, 2.35, 1.25]} rotation={[0.42, 0, 0]}>
+              <boxGeometry args={[1.5, 0.04, 2.2]} />
+              <meshStandardMaterial
+                color={running ? '#b78a7a' : '#aeb7c1'}
+                roughness={0.55} metalness={0.45}
+                emissive={running ? '#5b2a18' : '#000000'}
+                emissiveIntensity={running ? 0.5 : 0} />
+            </mesh>
+          </group>
+        )
+      })}
+
+      {/* the heat haze / Cherenkov-blue conceit above the convertors */}
+      <group ref={glow} position={[0, 2.9, 0]}>
+        <mesh>
+          <sphereGeometry args={[0.5, 12, 10]} />
+          <meshBasicMaterial
+            color="#a3e635" transparent opacity={0.16}
+            blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        </mesh>
+        <pointLight intensity={6} distance={9} color="#b6f24a" />
+      </group>
+
+      {/* radiation exclusion markers */}
+      {[0, 1, 2, 3, 4, 5].map((i) => {
+        const a = (i / 6) * Math.PI * 2
+        return (
+          <group key={i} position={[Math.cos(a) * 3.3, 0, Math.sin(a) * 3.3]}>
+            <mesh castShadow position={[0, 0.45, 0]}>
+              <cylinderGeometry args={[0.035, 0.035, 0.9, 6]} />
+              <meshStandardMaterial color="#d6d2c8" roughness={0.8} />
+            </mesh>
+            <mesh position={[0, 0.92, 0]} rotation={[0, -a, 0]}>
+              <planeGeometry args={[0.28, 0.28]} />
+              <meshStandardMaterial
+                color={running ? '#f2b63f' : '#8a8578'}
+                emissive={running ? '#f2b63f' : '#000000'}
+                emissiveIntensity={running ? 1.4 : 0}
+                side={THREE.DoubleSide} roughness={0.7} />
+            </mesh>
+          </group>
+        )
+      })}
+
+      <DustSkirt inner={2.0} outer={3.4} />
+    </group>
+  )
+}
+
+// ===========================================================================
 //  ROVER
 // ===========================================================================
 
@@ -1129,6 +1252,7 @@ export function Structures() {
         <CableRun to={[10, 12]} />
         <CableRun to={[-10, 12]} />
         <CableRun to={[-19, 4]} />
+        <CableRun to={[-28, 20]} sag={0.5} />
       </group>
 
       {placed.map(({ d, y }) => (
@@ -1146,6 +1270,7 @@ export function Structures() {
           )}
           {d.id === 'battery' && <Battery charge={Math.min(state.stocks.battery / 40, 1)} />}
           {d.id === 'rover' && <Rover charged={plan.modes.roverCharge > 0} />}
+          {d.id === 'reactor' && <Reactor state={state.reactor} />}
           {d.id === 'breach' && <Breach active={state.o2Leak > 0} />}
           {d.id !== 'breach' && d.id !== 'habitat' && <Beacon color={d.tint} />}
         </group>

@@ -19,6 +19,7 @@ const SUB_INFO: Record<Subsystem, { name: string; fn: string }> = {
 const TASKS: Task[] = [
   'cleanArray', 'repair', 'tendGreenhouse', 'mixNutrients', 'science',
   'iceRun', 'regolithShield', 'inspection', 'extraRest', 'plantCrop',
+  'startReactor',
 ]
 
 const TASK_LABEL: Record<Task, string> = {
@@ -33,6 +34,7 @@ const TASK_LABEL: Record<Task, string> = {
   regolithShield: 'Pile regolith shielding',
   inspection: 'Maintenance inspection',
   extraRest: 'Extra rest',
+  startReactor: 'Start fission unit',
 }
 
 export function Planning() {
@@ -53,7 +55,9 @@ export function Planning() {
   const usedHours = useGame((s) => s.usedCrewHours())
   const maxHours = useGame((s) => s.maxCrewHours())
 
-  const settle = settleAllocation(plan, state.stocks, state.env)
+  const settle = settleAllocation(plan, state.stocks, state.env, {
+    arrayFault: state.arrayFault, thermalFault: state.thermalFault, reactor: state.reactor,
+  })
   const subsystems = Object.keys(SUBSYSTEM_COST) as Subsystem[]
 
   const fmt = (n: number) => (n >= 0 ? `+${n.toFixed(1)}` : n.toFixed(1))
@@ -78,8 +82,13 @@ export function Planning() {
               <div>
                 <div className="label">Power Budget</div>
                 <div className="tiny body-dim">
-                  Array {Math.round(settle.generation)} kWh
+                  Array {Math.round(settle.solar)} kWh
                   {state.env.dustStorm && <span style={{ color: 'var(--caution)' }}> (dust storm)</span>}
+                  {settle.reactor > 0 && (
+                    <span style={{ color: 'var(--ok)' }}>
+                      {' + fission '}{Math.round(settle.reactor)} kWh
+                    </span>
+                  )}
                   {' + battery '}{Math.round(settle.batteryDraw)} kWh
                 </div>
               </div>
@@ -287,6 +296,20 @@ export function Planning() {
               <span>{r}</span>
             </div>
           ))}
+          {(state.reactor === 'stowed' || state.reactor === 'scrammed') && (
+            <div className="proj-warn">
+              <span>☢</span>
+              <span>
+                <strong>The fission unit is cold.</strong>{' '}
+                {state.reactor === 'scrammed'
+                  ? 'It scrammed and has not been restarted.'
+                  : 'It has never been started.'}{' '}
+                A startup shift costs {TASK_HOURS.startReactor} crew-hours, {C.REACTOR_START_KWH} kWh
+                of battery and a little dose — and from the following sol it adds{' '}
+                {C.REACTOR_KWH} kWh every sol, in any weather.
+              </span>
+            </div>
+          )}
           {settle.wasted > 0.5 && !proj.overAllocated && (
             <div className="proj-warn">
               <span>⚠</span>
