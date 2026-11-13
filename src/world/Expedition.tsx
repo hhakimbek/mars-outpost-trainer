@@ -6,6 +6,7 @@ import { ICE_THRESHOLD, SAMPLE_INFO, iceAt, sampleSites } from './iceField'
 import { patchId } from '../sim/expedition'
 import { terrainHeight, terrainNormal } from './noise'
 import { Rover } from './Structures'
+import { ModelSlot } from './ModelSlot'
 import { handoff, rover } from './roverState'
 import { useGame } from '../store/useGame'
 import { useField } from './fieldState'
@@ -300,7 +301,13 @@ export function Expedition() {
   return (
     <group>
       <group ref={group}>
-        <Rover charged={state.roverKwh > 0} />
+        {/* A real NASA model goes here the moment one is dropped into
+            public/models/ — see world/ModelSlot.tsx. Until then this is the
+            procedural vehicle, and nothing about the scene depends on which
+            of the two is drawn. */}
+        <ModelSlot slot="rover">
+          <Rover charged={state.roverKwh > 0} />
+        </ModelSlot>
         {/* the ground-penetrating radar boom, which is the instrument the
             whole expedition is steered by */}
         <group position={[-2.3, 0.5, 0]}>

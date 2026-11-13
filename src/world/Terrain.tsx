@@ -317,6 +317,78 @@ function InstancedRocks({
 }
 
 /**
+ * THE OUTER TERRAIN — the coarse half of the level of detail.
+ *
+ * The detailed crater floor is a 210 m square at 220 segments, which is about
+ * a metre per vertex. That was the whole world while the player walked, but
+ * the rover drives to 150 m from the centre — past the edge of the mesh,
+ * where the ground simply stopped existing and the sky showed underneath.
+ *
+ * The fix is the obvious one: a second, far coarser ring out to 400 m, built
+ * from the same `terrainHeight` function so the two agree exactly where they
+ * meet. It carries roughly a thirtieth of the vertex density, which is all a
+ * surface read at a hundred metres and up can show.
+ */
+const FAR_INNER = 96
+const FAR_OUTER = 400
+
+export function FarTerrain() {
+  const geometry = useMemo(() => {
+    const rings = 46
+    const segs = 108
+    const positions: number[] = []
+    const colors: number[] = []
+    const indices: number[] = []
+
+    const low = new THREE.Color('#7e4526')
+    const high = new THREE.Color('#a9774f')
+    const tmp = new THREE.Color()
+
+    for (let r = 0; r <= rings; r++) {
+      // Rings get further apart as they go out: detail belongs where the
+      // player is, and the far edge is three pixels tall.
+      const t = r / rings
+      const dist = FAR_INNER + (FAR_OUTER - FAR_INNER) * t * t
+      for (let a = 0; a <= segs; a++) {
+        const ang = (a / segs) * Math.PI * 2
+        const x = Math.cos(ang) * dist
+        const z = Math.sin(ang) * dist
+        const y = terrainHeight(x, z)
+        positions.push(x, y, z)
+        // Distance haze is baked in rather than left to the fog alone, so the
+        // ring reads as ground receding instead of a flat band.
+        tmp.copy(low).lerp(high, Math.min(Math.max((y + 2) / 9, 0), 1) * 0.6 + t * 0.4)
+        colors.push(tmp.r, tmp.g, tmp.b)
+      }
+    }
+
+    const row = segs + 1
+    for (let r = 0; r < rings; r++) {
+      for (let a = 0; a < segs; a++) {
+        const i0 = r * row + a
+        const i1 = i0 + 1
+        const i2 = i0 + row
+        const i3 = i2 + 1
+        indices.push(i0, i2, i1, i1, i2, i3)
+      }
+    }
+
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    geo.setIndex(indices)
+    geo.computeVertexNormals()
+    return geo
+  }, [])
+
+  return (
+    <mesh geometry={geometry} receiveShadow={false}>
+      <meshStandardMaterial vertexColors roughness={1} metalness={0} />
+    </mesh>
+  )
+}
+
+/**
  * Rock scatter at three scales: hand-sized gravel, mid boulders, and a few
  * large outcrops. Three separate instanced draws rather than one, so each can
  * use its own silhouette, tint and shadow budget.
@@ -341,6 +413,16 @@ export function Rocks() {
   const outcrops = useMemo(
     () => buildScatter(55, 24, 93, (r) => 1.4 + r() * r() * 2.6, 4242, 0.34,
       new THREE.Color('#5c2d16'), 0.14), [])
+  // The ground the rover drives over. Sparser than the near field — a third
+  // of the density over three times the area — because it is seen at speed
+  // and at distance, and because every instance out here is a shadow caster
+  // nobody is looking at.
+  const farBoulders = useMemo(
+    () => buildScatter(340, 94, 152, (r) => 0.5 + r() * r() * 1.8, 5150, 0.3,
+      new THREE.Color('#6d3418'), 0.12), [])
+  const farOutcrops = useMemo(
+    () => buildScatter(40, 96, 150, (r) => 1.6 + r() * r() * 3.0, 6161, 0.34,
+      new THREE.Color('#5c2d16'), 0.14), [])
 
   return (
     <group>
@@ -350,6 +432,12 @@ export function Rocks() {
       <InstancedRocks scatter={bouldersA} geometry={geoBoulderA} />
       <InstancedRocks scatter={bouldersB} geometry={geoBoulderB} />
       <InstancedRocks scatter={outcrops} geometry={geoOutcrop} />
+      {/* The far band shares the same four geometries — it is extra instances
+          in the same draw family, not extra models. It casts no shadows: at
+          this distance the shadow map has nothing to resolve and the cost is
+          the same as for a boulder at arm's length. */}
+      <InstancedRocks scatter={farBoulders} geometry={geoBoulderB} castShadow={false} />
+      <InstancedRocks scatter={farOutcrops} geometry={geoOutcrop} castShadow={false} />
     </group>
   )
 }

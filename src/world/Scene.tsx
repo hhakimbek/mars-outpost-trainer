@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { EffectComposer, Bloom, Vignette, Noise, SMAA, ToneMapping } from '@react-three/postprocessing'
 import { BlendFunction, ToneMappingMode } from 'postprocessing'
 import * as THREE from 'three'
-import { Terrain, Rocks, DistantRidges } from './Terrain'
+import { Terrain, FarTerrain, Rocks, DistantRidges } from './Terrain'
 import { Structures } from './Structures'
 import { Astronaut } from './Astronaut'
 import { Expedition } from './Expedition'
@@ -192,7 +192,11 @@ function Atmosphere({ storm }: { storm: boolean }) {
 
   useEffect(() => {
     if (!(scene.fog instanceof THREE.FogExp2)) {
-      scene.fog = new THREE.FogExp2(clear.getHex(), 0.0082)
+      // Thinner than it was. At 0.0082 anything past 150 m was solid haze,
+      // which was fine when the world ended at 88 m and is not now that the
+      // rover drives to 150. The storm value is untouched: closing visibility
+      // down is the hazard, and it still does.
+      scene.fog = new THREE.FogExp2(clear.getHex(), 0.0055)
     }
   }, [scene, clear])
 
@@ -201,7 +205,7 @@ function Atmosphere({ storm }: { storm: boolean }) {
     if (!fog) return
     const k = Math.min(dt * 0.5, 1)
     fog.color.lerp(storm ? murk : clear, k)
-    const target = storm ? 0.03 : 0.0082
+    const target = storm ? 0.03 : 0.0055
     fog.density += (target - fog.density) * k
   })
 
@@ -214,7 +218,7 @@ function Dust({ storm }: { storm: boolean }) {
   const matRef = useRef<THREE.PointsMaterial>(null)
 
   const geometry = useMemo(() => {
-    const count = 1400
+    const count = 1000
     const positions = new Float32Array(count * 3)
     const scales = new Float32Array(count)
     let seed = 99
@@ -244,12 +248,15 @@ function Dust({ storm }: { storm: boolean }) {
     const attr = points.current.geometry.attributes.position as THREE.BufferAttribute
     const drift = storm ? 19 : 2.6
     const t = state.clock.elapsedTime
-    for (let i = 0; i < attr.count; i++) {
-      let x = attr.getX(i) + drift * dt
-      if (x > 85) x = -85
-      attr.setX(i, x)
-      // gentle vertical sway; storms lift the load
-      attr.setY(i, attr.getY(i) + Math.sin(t * 0.6 + i) * dt * (storm ? 0.5 : 0.12))
+    // Straight into the backing array rather than through getX/setX. The
+    // accessors are four function calls per mote per frame and this loop runs
+    // sixty times a second on every frame of the whole mission.
+    const a = attr.array as Float32Array
+    const sway = dt * (storm ? 0.5 : 0.12)
+    for (let i = 0, j = 0; j < a.length; i++, j += 3) {
+      a[j] += drift * dt
+      if (a[j] > 85) a[j] = -85
+      a[j + 1] += Math.sin(t * 0.6 + i) * sway
     }
     attr.needsUpdate = true
 
@@ -557,6 +564,7 @@ export function Scene() {
       <SunDisc storm={storm} />
       <Lighting storm={storm} spe={spe} />
       <DistantRidges />
+      <FarTerrain />
       <Terrain />
       <Rocks />
       <Paths />

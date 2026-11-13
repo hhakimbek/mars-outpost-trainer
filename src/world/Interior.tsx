@@ -172,13 +172,7 @@ function Ceiling() {
               <planeGeometry args={long ? [w * 0.55, 0.22] : [0.22, d * 0.55]} />
               <meshBasicMaterial color="#fdf6e8" toneMapped={false} />
             </mesh>
-            <pointLight
-              position={[cx, CEILING - 0.25, cz]}
-              intensity={r.id === 'corridor' ? 7 : 5.5}
-              distance={Math.max(w, d) * 1.5}
-              decay={2}
-              color={r.id === 'airlock' ? '#ffd9b0' : '#fff2dd'}
-            />
+
           </group>
         )
       })}
@@ -817,9 +811,38 @@ function Walker() {
 //  SCENE
 // ===========================================================================
 
+/**
+ * Where the five lamps go.
+ *
+ * Every room used to carry its own point light, which is thirteen real lights
+ * in one scene — thirteen sets of shader uniforms evaluated for every
+ * fragment of every fitting, for a space sixteen metres across. The emissive
+ * luminaire panels on the ceiling do most of the visual work for nothing, so
+ * the actual lights are now five: one down the spine and one over each
+ * quarter of the floor plan, positioned to cover the rooms rather than to
+ * match them one for one.
+ */
+const LAMPS: [number, number, number][] = [
+  [-4.0, 0, 7],    // west spine
+  [4.0, 0, 7],     // east spine
+  [-4.6, 3.0, 5],  // command and lab
+  [3.2, 3.0, 5],   // galley and storage
+  [0.0, -3.0, 5],  // the whole south row
+]
+
 function InteriorLighting() {
   return (
     <>
+      {LAMPS.map(([x, z, i]) => (
+        <pointLight
+          key={`${x},${z}`}
+          position={[x, CEILING - 0.3, z]}
+          intensity={i}
+          distance={11}
+          decay={1.7}
+          color="#fff2dd"
+        />
+      ))}
       {/* A sealed can has no sky. The ambient term stands in for light bounced
           off white walls, which indoors is most of what you see by. */}
       <ambientLight intensity={0.85} color="#fff4e4" />

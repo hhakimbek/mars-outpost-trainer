@@ -8,9 +8,17 @@ import { softGlow } from './textures'
 import { useGame } from '../store/useGame'
 import { useField } from './fieldState'
 import { handoff, rover } from './roverState'
+import { FIELD_RADIUS } from './iceField'
 import type { Zone } from '../sim/types'
 
 const EYE = 1.7
+/**
+ * How far from the outpost a crew member on foot may get.
+ *
+ * Matched to FIELD_RADIUS, because the rover can be parked out there and
+ * somebody has to be able to walk back from it.
+ */
+const WALK_LIMIT = FIELD_RADIUS + 2
 const GRAVITY = -C.MARS_GRAVITY // 3.721 m/s^2, about 0.379 g
 
 interface Keys { [code: string]: boolean }
@@ -458,11 +466,14 @@ export function Astronaut() {
       }
     }
 
-    // keep inside the crater
+    // Keep inside the crater — but the limit has to be the rover's range,
+    // not the walker's. Run the rover flat at 140 m and you have to be able
+    // to walk home from it; at 88 m the crew member was stopped by thin air
+    // on the way back.
     const r = Math.hypot(pos.current.x, pos.current.z)
-    if (r > 88) {
-      pos.current.x *= 88 / r
-      pos.current.z *= 88 / r
+    if (r > WALK_LIMIT) {
+      pos.current.x *= WALK_LIMIT / r
+      pos.current.z *= WALK_LIMIT / r
     }
 
     // ---- gravity and jump, at 0.379 g ----

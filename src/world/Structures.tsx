@@ -5,6 +5,7 @@ import { STRUCTURES } from '../data/structures'
 import { terrainHeight } from './noise'
 import { hullPanels, solarCells, hazardStripe, dustStreak, softGlow } from './textures'
 import { useGame } from '../store/useGame'
+import { ModelSlot } from './ModelSlot'
 import { bedStage } from '../sim/greenhouse'
 import { CROPS, type CropId } from '../data/crops'
 import type { CropBed, ReactorState } from '../sim/types'
@@ -1292,8 +1293,14 @@ export function Structures() {
 
       {placed.map(({ d, y }) => (
         <group key={d.id} position={[d.pos[0], y, d.pos[2]]} rotation={[0, d.rot ?? 0, 0]}>
-          {d.id === 'habitat' && <Habitat shield={state.shieldInstalled} />}
-          {d.id === 'solar' && <SolarArray cleanliness={state.stocks.cleanliness} />}
+          {d.id === 'habitat' && (
+            <ModelSlot slot="habitat"><Habitat shield={state.shieldInstalled} /></ModelSlot>
+          )}
+          {d.id === 'solar' && (
+            <ModelSlot slot="solarArray">
+              <SolarArray cleanliness={state.stocks.cleanliness} />
+            </ModelSlot>
+          )}
           {d.id === 'greenhouse' && (
             <Greenhouse beds={state.greenhouse.beds} lit={plan.modes.greenhouse / 3} />
           )}
@@ -1307,7 +1314,9 @@ export function Structures() {
           {/* The dock pad stays put; the vehicle itself is wherever it was
               last parked, and is drawn by the expedition controller. */}
           {d.id === 'rover' && <RoverPad />}
-          {d.id === 'reactor' && <Reactor state={state.reactor} />}
+          {d.id === 'reactor' && (
+            <ModelSlot slot="reactor"><Reactor state={state.reactor} /></ModelSlot>
+          )}
           {d.id === 'breach' && <Breach active={state.o2Leak > 0} />}
           {d.id !== 'breach' && d.id !== 'habitat' && <Beacon color={d.tint} />}
         </group>
